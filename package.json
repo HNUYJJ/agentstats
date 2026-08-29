@@ -1,0 +1,50 @@
+{
+  "name": "agentstats",
+  "version": "0.1.0",
+  "description": "Usage & cost analytics for AI coding agents (Claude Code, Codex CLI, Gemini CLI). 100% local, zero dependencies, works offline.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "bin": {
+    "agentstats": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "pretest": "npm run build",
+    "test": "node --test test/pricing.test.js test/adapters.test.js test/cli.test.js",
+    "dev": "tsc --watch"
+  },
+  "keywords": [
+    "claude-code",
+    "codex",
+    "codex-cli",
+    "gemini-cli",
+    "ai-agents",
+    "usage",
+    "cost",
+    "tokens",
+    "analytics",
+    "cli",
+    "developer-tools"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YOUR_USERNAME/agentstats.git"
+  },
+  "bugs": {
+    "url": "https://github.com/YOUR_USERNAME/agentstats/issues"
+  },
+  "homepage": "https://github.com/YOUR_USERNAME/agentstats#readme",
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}

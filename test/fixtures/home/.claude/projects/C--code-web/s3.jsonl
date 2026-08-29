@@ -1,0 +1,1 @@
+{"type":"assistant","sessionId":"s3","requestId":"req_3","timestamp":"2026-08-21T12:00:00.000Z","message":{"id":"msg_3","type":"message","role":"assistant","model":"mystery-model-x","usage":{"input_tokens":7,"output_tokens":3}}}
