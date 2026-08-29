@@ -37,12 +37,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/YOUR_USERNAME/agentstats.git"
+    "url": "git+https://github.com/HNUYJJ/agentstats.git"
   },
   "bugs": {
-    "url": "https://github.com/YOUR_USERNAME/agentstats/issues"
+    "url": "https://github.com/HNUYJJ/agentstats/issues"
   },
-  "homepage": "https://github.com/YOUR_USERNAME/agentstats#readme",
+  "homepage": "https://github.com/HNUYJJ/agentstats#readme",
   "devDependencies": {
     "@types/node": "^22.10.0",
     "typescript": "^5.7.0"

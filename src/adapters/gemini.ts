@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { AgentId, UsageEvent } from '../types.js';
 import { baseName, linesOf, listFiles, mtimeMs, safeInt } from './util.js';
@@ -92,7 +92,13 @@ export const geminiAdapter = {
     }
 
     if (files.length > 0 && events.length === 0) {
-      notes.push('sessions found but they contain no token usage data (older Gemini CLI versions do not record usage)');
+      notes.push('legacy Gemini CLI sessions found but they contain no token usage data');
+    }
+    const antigravityDir = path.join(home, '.gemini', 'antigravity');
+    if (existsSync(antigravityDir)) {
+      notes.push(
+        `Antigravity data detected at ${antigravityDir} - Google does not record per-turn token usage in local Antigravity logs, so nothing can be parsed from it`
+      );
     }
     return { agent: this.id as AgentId, root, exists: files.length > 0, files: files.length, events, notes };
   },

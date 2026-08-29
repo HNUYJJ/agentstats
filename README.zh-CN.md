@@ -2,7 +2,7 @@
 
 **AI 编程 Agent 的用量与成本统计工具。** 一条离线命令，看清楚你的 Claude Code、Codex CLI、Gemini CLI 到底烧了多少 token、折合多少钱。
 
-[![CI](https://github.com/YOUR_USERNAME/agentstats/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/agentstats/actions/workflows/ci.yml)
+[![CI](https://github.com/HNUYJJ/agentstats/actions/workflows/ci.yml/badge.svg)](https://github.com/HNUYJJ/agentstats/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/agentstats)](https://www.npmjs.com/package/agentstats)
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 
@@ -94,7 +94,8 @@ agentstats daily --json | jq '.totals'
 |---|---|---|
 | Claude Code | `~/.claude/projects/**/*.jsonl` | ✅ 完整支持 |
 | Codex CLI / 桌面版 | `~/.codex/sessions/**/*.jsonl` | ✅ 完整支持 |
-| Gemini CLI | `~/.gemini/tmp/**/chats/session-*.json` | ⚠️ 尽力解析——不记录用量的旧版本会被 `doctor` 明确报告 |
+| Gemini CLI（已停服，2026-06-18） | `~/.gemini/tmp/**/chats/session-*.json` | ✅ 支持读取记录了用量的历史会话 |
+| Antigravity CLI / 桌面版 | — | ❌ Google 在 Antigravity 本地日志中不记录逐轮 token 用量；检测到 `~/.gemini/antigravity` 时 `doctor` 会明确说明 |
 
 ## FAQ
 
@@ -104,10 +105,13 @@ agentstats daily --json | jq '.totals'
 
 **会拖慢我的 Agent 吗？** 不会。它是按需运行的只读 CLI，Agent 完全不感知。
 
+**为什么没有 Antigravity 的数据？** Antigravity（Gemini CLI 的继任者，Google 于 2026-06-18 停服 Gemini CLI）不会把逐轮 token 用量写入任何本地日志文件。`agentstats` 检测到 `~/.gemini/antigravity` 时会通过 `doctor` 明确告知这一点，而不是默默显示 $0。如果 Google 未来在本地日志或 API 中暴露用量数据，会以适配器形式支持。
+
 ## Roadmap
 
+- [ ] 定时 GitHub Action：自动抓取官方定价页并刷新内置价目表
 - [ ] Cursor 及其他 IDE Agent（SQLite 日志）
-- [ ] Gemini Antigravity 转录
+- [ ] Antigravity 用量接入（如果 Google 未来在本地日志或 API 中暴露用量）
 - [ ] `--watch` 实时面板
 - [ ] 非 USD 货币
 - [ ] `agentstats mcp` —— 通过 MCP 把你自己的统计暴露给 Agent

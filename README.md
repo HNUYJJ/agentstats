@@ -2,7 +2,7 @@
 
 **Usage & cost analytics for AI coding agents.** Know exactly how many tokens your Claude Code, Codex CLI and Gemini CLI sessions burn — and what they would have cost — with a single offline command.
 
-[![CI](https://github.com/YOUR_USERNAME/agentstats/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/agentstats/actions/workflows/ci.yml)
+[![CI](https://github.com/HNUYJJ/agentstats/actions/workflows/ci.yml/badge.svg)](https://github.com/HNUYJJ/agentstats/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/agentstats)](https://www.npmjs.com/package/agentstats)
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 [![node](https://img.shields.io/node/v/agentstats)](./package.json)
@@ -97,7 +97,8 @@ Model names are normalized aggressively (`openai/gpt-5.6-luna`, `us.anthropic.cl
 |---|---|---|
 | Claude Code | `~/.claude/projects/**/*.jsonl` | ✅ full |
 | Codex CLI / desktop | `~/.codex/sessions/**/*.jsonl` | ✅ full |
-| Gemini CLI | `~/.gemini/tmp/**/chats/session-*.json` | ⚠️ best-effort — versions that don't record usage are detected and reported by `doctor` |
+| Gemini CLI (legacy, shut down 2026-06-18) | `~/.gemini/tmp/**/chats/session-*.json` | ✅ historical sessions that recorded usage |
+| Antigravity CLI / desktop | — | ❌ Google does not record per-turn token usage in local Antigravity logs; `doctor` says so explicitly when it detects `~/.gemini/antigravity` |
 
 ## FAQ
 
@@ -109,10 +110,13 @@ Model names are normalized aggressively (`openai/gpt-5.6-luna`, `us.anthropic.cl
 
 **Why do my numbers differ from my provider invoice?** Estimates use list prices; enterprise rates, batch discounts, subscriptions and rate-limit windows differ. Use them for relative comparisons and budget tracking.
 
+**Why are there no Antigravity numbers?** Antigravity — the successor to Gemini CLI, which Google shut down on 2026-06-18 — does not write per-turn token usage into any local log file. `agentstats` detects `~/.gemini/antigravity` and tells you this explicitly via `doctor`, rather than showing a silent $0. If Google ever exposes usage in local logs or an API, support lands as an adapter.
+
 ## Roadmap
 
+- [ ] Scheduled GitHub Action that refreshes the bundled price table from official pricing pages
 - [ ] Cursor & other IDE agents (SQLite-backed logs)
-- [ ] Gemini Antigravity transcripts
+- [ ] Antigravity usage ingestion, if Google ever exposes usage in local logs or an API
 - [ ] `--watch` live dashboard mode
 - [ ] Non-USD currencies
 - [ ] `agentstats mcp` — expose your own stats to your agents via MCP
