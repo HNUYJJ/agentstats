@@ -91,7 +91,7 @@ Prices live in a single flat table in [`src/pricing.ts`](./src/pricing.ts) and c
 
 Model names are normalized aggressively (`openai/gpt-5.6-luna`, `us.anthropic.claude-sonnet-4-5:beta`, date suffixes), so one key covers the variants. Unpriced models are flagged with `*` and cost $0 rather than being guessed.
 
-**The bundled table refreshes itself.** A scheduled GitHub Action runs daily: it fetches a machine-readable community price database (LiteLLM's, which tracks official vendor pricing), regenerates `src/prices.generated.ts`, and pushes the change only after the full test suite passes. Values you have verified yourself can be pinned in `MANUAL_PRICES` in [`src/pricing.ts`](./src/pricing.ts) — pins win over the generated table, and user `pricingOverrides` win over everything.
+**The bundled table refreshes itself, from official sources.** A scheduled GitHub Action runs daily (08:00 UTC): it parses the vendors' own pricing pages — Anthropic's docs markdown, OpenAI's embedded pricing tables (standard tier only), Google's per-model pricing tables — and regenerates `src/prices.generated.ts`. Every model carries a provenance tag (`official` vs `community`), visible via `agentstats pricing`. A community price database (LiteLLM) only fills models the official pages no longer list; if any official page changes layout, the refresh fails loudly rather than silently degrading to third-party data, and the whole run writes nothing unless every validation passes. Values you have verified yourself can be pinned in `MANUAL_PRICES` in [`src/pricing.ts`](./src/pricing.ts) — pins win over the generated table, and user `pricingOverrides` win over everything.
 
 ## Supported tools
 
@@ -116,7 +116,7 @@ Model names are normalized aggressively (`openai/gpt-5.6-luna`, `us.anthropic.cl
 
 ## Roadmap
 
-- [x] Scheduled GitHub Action that auto-refreshes the bundled price table daily (`.github/scripts/update-prices.mjs`)
+- [x] Scheduled GitHub Action that auto-refreshes the bundled price table daily from official vendor pricing pages (`.github/scripts/update-prices.mjs`)
 - [ ] Cursor & other IDE agents (SQLite-backed logs)
 - [ ] Antigravity usage ingestion, if Google ever exposes usage in local logs or an API
 - [ ] `--watch` live dashboard mode

@@ -1,17 +1,13 @@
-import { GENERATED_PRICES } from './prices.generated.js';
+import { GENERATED_PRICES, GENERATED_SOURCES } from './prices.generated.js';
 import { Config, ModelPrice, UsageEvent } from './types.js';
 
 /**
  * Hand-curated prices. Wins over the auto-generated table; use this to pin a
- * price you have verified against the vendor, or to add models the scheduled
- * refresh does not know about. User config (pricingOverrides) wins over both.
+ * price you have verified against the vendor, or to add models neither the
+ * official pricing pages nor the community fallback know about. Note that pins
+ * never auto-update — user config (pricingOverrides) wins over everything.
  */
 const MANUAL_PRICES: Record<string, ModelPrice> = {
-  // LiteLLM lists the GPT-5.6 family ~10% above OpenAI's announced prices
-  // (openai.com/index/gpt-5-6/, verified 2026-08-29); pinned to official rates.
-  'gpt-5-6-sol': { input: 5, cachedInput: 0.5, output: 30 },
-  'gpt-5-6-terra': { input: 2, cachedInput: 0.2, output: 12 },
-  'gpt-5-6-luna': { input: 0.2, cachedInput: 0.02, output: 1.2 },
   // example:
   // 'codex-auto-review': { input: 1.25, cachedInput: 0.125, output: 10 },
 };
@@ -68,8 +64,8 @@ export function eventCost(e: UsageEvent, p: ModelPrice): number {
 }
 
 /** All bundled prices plus overrides, for the `pricing` command. */
-export function listPriceRows(overrides?: Config['pricingOverrides'] | null): Array<{ model: string; source: 'generated' | 'manual' | 'override' | 'overridden'; price: ModelPrice }> {
-  const rows: Array<{ model: string; source: 'generated' | 'manual' | 'override' | 'overridden'; price: ModelPrice }> = [];
+export function listPriceRows(overrides?: Config['pricingOverrides'] | null): Array<{ model: string; source: 'official' | 'community' | 'manual' | 'override' | 'overridden'; price: ModelPrice }> {
+  const rows: Array<{ model: string; source: 'official' | 'community' | 'manual' | 'override' | 'overridden'; price: ModelPrice }> = [];
   const seen = new Set<string>();
   if (overrides) {
     for (const k of Object.keys(overrides).sort()) {
@@ -79,7 +75,13 @@ export function listPriceRows(overrides?: Config['pricingOverrides'] | null): Ar
   }
   const manualKeys = new Set(Object.keys(MANUAL_PRICES));
   for (const k of Object.keys(PRICES).sort()) {
-    const source = seen.has(k) ? 'overridden' : manualKeys.has(k) ? 'manual' : 'generated';
+    const source = seen.has(k)
+      ? 'overridden'
+      : manualKeys.has(k)
+        ? 'manual'
+        : (GENERATED_SOURCES[k] ?? '').startsWith('official')
+          ? 'official'
+          : 'community';
     rows.push({ model: k, source, price: PRICES[k] });
   }
   return rows;

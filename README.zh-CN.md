@@ -88,7 +88,7 @@ agentstats daily --json | jq '.totals'
 
 模型名做了强归一化（`openai/gpt-5.6-luna`、`us.anthropic.claude-sonnet-4-5:beta`、日期后缀等），一个 key 覆盖所有变体。未定价的模型标 `*` 计 $0，绝不瞎猜。
 
-**内置价目表会自动刷新。** 一个定时 GitHub Action 每天运行：抓取机器可读的社区价格数据库（LiteLLM，紧跟各厂商官方定价），重新生成 `src/prices.generated.ts`，并且只有在完整测试套件通过后才提交变更。你亲自核实过的价格可以钉在 [`src/pricing.ts`](./src/pricing.ts) 的 `MANUAL_PRICES` 里——手动钉价优先于生成表，用户的 `pricingOverrides` 优先于一切。
+**内置价目表会自动刷新，且以官方价格为准。** 一个定时 GitHub Action 每天运行（UTC 08:00，北京时间 16:00）：解析各厂商自己的定价页——Anthropic 文档站的 markdown 原文、OpenAI 页面内嵌的定价表（仅标准档）、Google 的分模型定价表——重新生成 `src/prices.generated.ts`。每个模型都带来源标注（`official` 或 `community`），可用 `agentstats pricing` 查看。社区价格数据库（LiteLLM）只负责补齐官方页面已下架的模型；任何官方页面改版都会让刷新**大声失败**，而不是悄悄降级到第三方数据，且所有校验通过前不会写入任何内容。你亲自核实过的价格可以钉在 [`src/pricing.ts`](./src/pricing.ts) 的 `MANUAL_PRICES` 里——手动钉价优先于生成表，用户的 `pricingOverrides` 优先于一切。
 
 ## 支持的工具
 
@@ -111,7 +111,7 @@ agentstats daily --json | jq '.totals'
 
 ## Roadmap
 
-- [x] 定时 GitHub Action：每日自动刷新内置价目表（`.github/scripts/update-prices.mjs`）
+- [x] 定时 GitHub Action：每日自动刷新内置价目表，以官方定价页为准（`.github/scripts/update-prices.mjs`）
 - [ ] Cursor 及其他 IDE Agent（SQLite 日志）
 - [ ] Antigravity 用量接入（如果 Google 未来在本地日志或 API 中暴露用量）
 - [ ] `--watch` 实时面板

@@ -394,8 +394,7 @@ function cmdPricing(flags: Args['flags'], home: string): number {
     strip(r.price.input),
     strip(r.price.cachedInput ?? r.price.input * 0.1),
     strip(r.price.output),
-    r.source === 'override' || r.source === 'overridden' ? r.source : dim(r.source),
-  ]);
+    r.source === 'override' || r.source === 'overridden' ? r.source : dim(r.source),  ]);
   console.log(renderTable(['Model', 'Input /MTok', 'Cached /MTok', 'Output /MTok', 'Source'], table, { aligns: ['l', 'r', 'r', 'r', 'l'] }));
   console.log();
   console.log(dim('prices in USD per 1M tokens; override them via "pricingOverrides" in ' + configPath(home)));

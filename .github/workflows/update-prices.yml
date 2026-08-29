@@ -2,8 +2,8 @@ name: Update prices
 
 on:
   schedule:
-    # daily at 03:17 UTC; GitHub may start scheduled runs a few minutes late
-    - cron: "17 3 * * *"
+    # daily at 08:00 UTC (16:00 Beijing); GitHub may start scheduled runs a few minutes late
+    - cron: "0 8 * * *"
   workflow_dispatch:
 
 concurrency:
