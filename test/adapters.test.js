@@ -2,7 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { scanAll } from '../dist/scan.js';
 import { totalsOf, filterEvents } from '../dist/aggregate.js';
+import { loadConfig } from '../dist/config.js';
 import { fixturesHome } from './helpers.js';
+
+// fixture config pins prices for the fixture models, so the expected cost
+// below stays valid no matter when the bundled table was last auto-refreshed
+const cfg = loadConfig(fixturesHome);
 
 const EXPECTED_TOTAL = 0.0165855;
 
@@ -56,7 +61,7 @@ test('gemini adapter walks session JSON for usageMetadata', async () => {
 
 test('cost math matches hand-computed fixture totals', async () => {
   const { events } = await scanAll(fixturesHome);
-  const t = totalsOf(events);
+  const t = totalsOf(events, cfg);
   assert.ok(Math.abs(t.cost - EXPECTED_TOTAL) < 1e-9, `cost ${t.cost} != ${EXPECTED_TOTAL}`);
   assert.equal(t.events, 7);
 });

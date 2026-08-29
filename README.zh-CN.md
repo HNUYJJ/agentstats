@@ -88,6 +88,8 @@ agentstats daily --json | jq '.totals'
 
 模型名做了强归一化（`openai/gpt-5.6-luna`、`us.anthropic.claude-sonnet-4-5:beta`、日期后缀等），一个 key 覆盖所有变体。未定价的模型标 `*` 计 $0，绝不瞎猜。
 
+**内置价目表会自动刷新。** 一个定时 GitHub Action 每天运行：抓取机器可读的社区价格数据库（LiteLLM，紧跟各厂商官方定价），重新生成 `src/prices.generated.ts`，并且只有在完整测试套件通过后才提交变更。你亲自核实过的价格可以钉在 [`src/pricing.ts`](./src/pricing.ts) 的 `MANUAL_PRICES` 里——手动钉价优先于生成表，用户的 `pricingOverrides` 优先于一切。
+
 ## 支持的工具
 
 | 工具 | 数据源 | 状态 |
@@ -109,20 +111,20 @@ agentstats daily --json | jq '.totals'
 
 ## Roadmap
 
-- [ ] 定时 GitHub Action：自动抓取官方定价页并刷新内置价目表
+- [x] 定时 GitHub Action：每日自动刷新内置价目表（`.github/scripts/update-prices.mjs`）
 - [ ] Cursor 及其他 IDE Agent（SQLite 日志）
 - [ ] Antigravity 用量接入（如果 Google 未来在本地日志或 API 中暴露用量）
 - [ ] `--watch` 实时面板
 - [ ] 非 USD 货币
 - [ ] `agentstats mcp` —— 通过 MCP 把你自己的统计暴露给 Agent
 
-欢迎贡献，尤其是价目表更新——通常就是一行改动。
+欢迎贡献。价格修正请把核实过的数值钉在 `MANUAL_PRICES` 里——定时刷新只重写生成条目，手动钉价不会被覆盖。
 
 ## 开发
 
 ```bash
 npm install
-npm test        # 构建并运行测试（23 个用例，基于合成夹具）
+npm test        # 构建并运行测试（25 个用例，基于合成夹具）
 ```
 
 ## License

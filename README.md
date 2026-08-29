@@ -91,6 +91,8 @@ Prices live in a single flat table in [`src/pricing.ts`](./src/pricing.ts) and c
 
 Model names are normalized aggressively (`openai/gpt-5.6-luna`, `us.anthropic.claude-sonnet-4-5:beta`, date suffixes), so one key covers the variants. Unpriced models are flagged with `*` and cost $0 rather than being guessed.
 
+**The bundled table refreshes itself.** A scheduled GitHub Action runs daily: it fetches a machine-readable community price database (LiteLLM's, which tracks official vendor pricing), regenerates `src/prices.generated.ts`, and pushes the change only after the full test suite passes. Values you have verified yourself can be pinned in `MANUAL_PRICES` in [`src/pricing.ts`](./src/pricing.ts) — pins win over the generated table, and user `pricingOverrides` win over everything.
+
 ## Supported tools
 
 | Agent | Source | Status |
@@ -114,20 +116,20 @@ Model names are normalized aggressively (`openai/gpt-5.6-luna`, `us.anthropic.cl
 
 ## Roadmap
 
-- [ ] Scheduled GitHub Action that refreshes the bundled price table from official pricing pages
+- [x] Scheduled GitHub Action that auto-refreshes the bundled price table daily (`.github/scripts/update-prices.mjs`)
 - [ ] Cursor & other IDE agents (SQLite-backed logs)
 - [ ] Antigravity usage ingestion, if Google ever exposes usage in local logs or an API
 - [ ] `--watch` live dashboard mode
 - [ ] Non-USD currencies
 - [ ] `agentstats mcp` — expose your own stats to your agents via MCP
 
-Contributions are welcome — especially price-table updates, which are a one-line change.
+Contributions are welcome. For price corrections, pin the verified value in `MANUAL_PRICES` — the scheduled refresh only rewrites generated entries, so pins survive.
 
 ## Development
 
 ```bash
 npm install
-npm test        # builds and runs the test suite (23 tests, fixture-based)
+npm test        # builds and runs the test suite (25 tests, fixture-based)
 ```
 
 The test suite parses synthetic fixture logs covering dedupe, cache-write splits, cumulative counters and model switching — no real transcripts are needed or used.

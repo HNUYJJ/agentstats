@@ -1,0 +1,9 @@
+{
+  "pricingOverrides": {
+    "claude-sonnet-4-5": { "input": 3, "cachedInput": 0.3, "output": 15 },
+    "claude-opus-4-5": { "input": 5, "cachedInput": 0.5, "output": 25 },
+    "claude-haiku-4-5": { "input": 1, "cachedInput": 0.1, "output": 5 },
+    "gpt-5-6-luna": { "input": 0.2, "cachedInput": 0.02, "output": 1.2 },
+    "gemini-2-5-pro": { "input": 1.25, "cachedInput": 0.3125, "output": 10 }
+  }
+}

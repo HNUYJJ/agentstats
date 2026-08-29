@@ -1,0 +1,44 @@
+name: Update prices
+
+on:
+  schedule:
+    # daily at 03:17 UTC; GitHub may start scheduled runs a few minutes late
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: update-prices
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Fetch prices and regenerate the bundled table
+        run: node .github/scripts/update-prices.mjs
+
+      - name: Validate (build + tests guard the generated table)
+        run: |
+          npm ci
+          npm test
+
+      - name: Commit and push if the table changed
+        run: |
+          if [[ -n $(git status --porcelain src/prices.generated.ts) ]]; then
+            git config user.name "agentstats-price-bot"
+            git config user.email "agentstats-price-bot@users.noreply.github.com"
+            git add src/prices.generated.ts
+            git commit -m "chore(prices): auto-refresh bundled price table"
+            git push
+          else
+            echo "No price changes detected"
+          fi
