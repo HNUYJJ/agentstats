@@ -1,6 +1,6 @@
 {
   "name": "agentstats",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Usage & cost analytics for AI coding agents (Claude Code, Codex CLI, Gemini CLI). 100% local, zero dependencies, works offline.",
   "license": "MIT",
   "type": "module",

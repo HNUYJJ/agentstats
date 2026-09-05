@@ -63,7 +63,8 @@ Requires Node 18.17+. No build, no config, no API keys.
 | `agentstats budget set 50` | track a $50/month budget (`budget`, `budget clear`) |
 | `agentstats report --out report.md` | export a standalone markdown report |
 | `agentstats pricing` | the bundled price table, with per-model provenance |
-| `agentstats doctor` | which sources were found, file/event counts, notes |
+| `agentstats doctor` | which sources were found, mcp self-test, diagnostics |
+| `agentstats install` | register the MCP server in a harness (claude/codex/cursor/gemini) |
 | `agentstats daily --watch` | live dashboard, re-renders every few seconds |
 | `agentstats mcp` | expose all of this to AI agents via MCP (stdio) |
 
@@ -80,6 +81,18 @@ agentstats daily --json | jq '.totals'
 
 `agentstats mcp` is a zero-dependency [MCP](https://modelcontextprotocol.io) stdio server that exposes your usage data to coding agents as tools: `usage_summary`, `daily_usage`, `model_breakdown`, `top_sessions`, `budget_status` and `price_lookup`.
 
+**One command lands it in your harness** — `agentstats install` writes the MCP registration into the harness's own config (keeping a `<file>.agentstats-backup` next to every file it touches, and refusing to touch configs it cannot parse):
+
+```bash
+agentstats install           # show detection/configuration status for all harnesses
+agentstats install claude    # Claude Code         -> ~/.claude.json
+agentstats install codex     # Codex CLI/desktop   -> ~/.codex/config.toml
+agentstats install cursor    # Cursor              -> ~/.cursor/mcp.json
+agentstats install gemini    # Gemini/Antigravity  -> ~/.gemini/settings.json
+```
+
+Prefer doing it by hand, or use a harness not listed above? Any MCP client works:
+
 ```bash
 # Claude Code
 claude mcp add agentstats -- npx agentstats mcp
@@ -93,7 +106,7 @@ args = ["mcp"]
 { "mcpServers": { "agentstats": { "command": "agentstats", "args": ["mcp"] } } }
 ```
 
-Then just ask your agent: *"how much did I spend on AI this week?"* Answers come from the same local logs, with the same privacy guarantees as the CLI.
+Then just ask your agent: *"how much did I spend on AI this week?"* Answers come from the same local logs, with the same privacy guarantees as the CLI. `agentstats doctor` self-tests the MCP server so you can verify the setup in one line.
 
 ## How costs are estimated
 
@@ -141,7 +154,8 @@ Model names are normalized aggressively (`openai/gpt-5.6-luna`, `us.anthropic.cl
 - [x] Scheduled GitHub Action that auto-refreshes the bundled price table daily from official vendor pricing pages (`.github/scripts/update-prices.mjs`)
 - [x] `agentstats mcp` — expose your own stats to your agents via MCP
 - [x] `--watch` live dashboard mode
-- [ ] Cursor & other IDE agents (SQLite-backed logs)
+- [x] One-command install into Claude Code / Codex / Cursor / Gemini configs (`agentstats install`)
+- [ ] Cursor usage ingestion from SQLite logs (the MCP registration above is separate and works today)
 - [ ] Antigravity usage ingestion, if Google ever exposes usage in local logs or an API
 - [ ] Non-USD currencies
 
@@ -151,7 +165,7 @@ Contributions are welcome - see [CONTRIBUTING.md](./CONTRIBUTING.md). For price 
 
 ```bash
 npm install
-npm test        # builds and runs the test suite (27 tests, fixture-based)
+npm test        # builds and runs the test suite (33 tests, fixture-based)
 ```
 
 The test suite parses synthetic fixture logs covering dedupe, cache-write splits, cumulative counters and model switching — no real transcripts are needed or used.

@@ -21,6 +21,9 @@ test('mcp server: initialize, tools/list, tools/call, error codes', () => {
     { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'price_lookup', arguments: { model: 'claude-sonnet-4-5' } } },
     { jsonrpc: '2.0', id: 5, method: 'bogus/method' },
     { jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'no_such_tool', arguments: {} } },
+    { jsonrpc: '2.0', id: 7, method: 'resources/list' },
+    { jsonrpc: '2.0', id: 8, method: 'prompts/list' },
+    { jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'daily_usage', arguments: 'oops' } },
   ]);
   assert.equal(r.status, 0, r.stderr);
 
@@ -54,6 +57,11 @@ test('mcp server: initialize, tools/list, tools/call, error codes', () => {
 
   assert.equal(byId.get(5).error.code, -32601);
   assert.equal(byId.get(6).error.code, -32602);
+
+  // probed capabilities we do not offer answer empty, not an error
+  assert.deepEqual(byId.get(7).result.resources, []);
+  assert.deepEqual(byId.get(8).result.prompts, []);
+  assert.equal(byId.get(9).error.code, -32602); // non-object arguments refused
 
   // notifications must never produce a response line
   assert.ok(!r.stdout.includes('"notifications/initialized"'));

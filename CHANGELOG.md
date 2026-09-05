@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0 - 2026-09-05
+
+- `agentstats install [harness]` — one-command registration of the MCP server into Claude Code (`~/.claude.json`), Codex (`~/.codex/config.toml`), Cursor (`~/.cursor/mcp.json`) and Gemini/Antigravity CLI (`~/.gemini/settings.json`); bare `agentstats install` shows per-harness detection/configuration status
+- Every install write keeps a `<file>.agentstats-backup` next to the original; unparseable foreign configs are refused untouched
+- MCP robustness: `resources/*` and `prompts/*` probes answer empty instead of erroring, non-object tool arguments are rejected with -32602, and tool output is capped at 20k characters so one huge log collection cannot blow an agent's context window
+- `agentstats doctor` self-tests the MCP server in-process (`mcp: ok (6 tools)`) and reports the result in `--json`
+
 ## 0.2.1 - 2026-09-05
 
 - fix: user-supplied config is sanitized - invalid `budget` or `pricingOverrides` values are dropped instead of surfacing as NaN costs

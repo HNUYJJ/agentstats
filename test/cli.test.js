@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { currentMonth, fixturesHome, runCli, tmpHome } from './helpers.js';
@@ -136,6 +136,75 @@ test('projects --json ranks projects by cost', () => {
   const human = runCli(['projects']);
   assert.equal(human.status, 0, human.stderr);
   assert.ok(human.stdout.includes('Project'));
+});
+
+test('install status lists all supported harnesses', () => {
+  const r = runCli(['install']);
+  assert.equal(r.status, 0, r.stderr);
+  for (const id of ['claude', 'codex', 'cursor', 'gemini']) assert.ok(r.stdout.includes(id));
+  assert.ok(r.stdout.includes('Configured'));
+});
+
+test('install codex appends toml block idempotently with a backup', () => {
+  const home = tmpHome();
+  try {
+    const cfg = path.join(home, '.codex', 'config.toml');
+    mkdirSync(path.dirname(cfg), { recursive: true });
+    writeFileSync(cfg, 'model = "gpt-6-astra"\n');
+
+    const first = runCli(['install', 'codex'], home);
+    assert.equal(first.status, 0, first.stderr);
+    const text = readFileSync(cfg, 'utf8');
+    assert.ok(text.startsWith('model = "gpt-6-astra"\n'), 'original content must be preserved');
+    assert.ok(text.includes('[mcp_servers.agentstats]'));
+    assert.ok(text.includes('command = "agentstats"'));
+    const backup = cfg + '.agentstats-backup';
+    assert.ok(existsSync(backup));
+    assert.equal(readFileSync(backup, 'utf8'), 'model = "gpt-6-astra"\n');
+
+    const second = runCli(['install', 'codex'], home);
+    assert.equal(second.status, 0, second.stderr);
+    assert.ok(second.stdout.includes('already'));
+    assert.equal(text.split('[mcp_servers.agentstats]').length - 1, 1);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('install claude merges mcpServers and preserves existing entries', () => {
+  const home = tmpHome();
+  try {
+    const cfg = path.join(home, '.claude.json');
+    writeFileSync(cfg, JSON.stringify({ numStartups: 3, mcpServers: { other: { command: 'x' } } }));
+    const r = runCli(['install', 'claude'], home);
+    assert.equal(r.status, 0, r.stderr);
+    const doc = JSON.parse(readFileSync(cfg, 'utf8'));
+    assert.equal(doc.numStartups, 3);
+    assert.equal(doc.mcpServers.other.command, 'x');
+    assert.equal(doc.mcpServers.agentstats.command, 'agentstats');
+    assert.equal(doc.mcpServers.agentstats.args[0], 'mcp');
+    assert.ok(existsSync(cfg + '.agentstats-backup'));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('install refuses invalid foreign JSON and unknown harness names', () => {
+  const home = tmpHome();
+  try {
+    const cfg = path.join(home, '.claude.json');
+    writeFileSync(cfg, '{not json');
+    const bad = runCli(['install', 'claude'], home);
+    assert.equal(bad.status, 1);
+    assert.ok(bad.stderr.includes('not valid JSON'));
+    assert.equal(readFileSync(cfg, 'utf8'), '{not json', 'refused file must stay untouched');
+
+    const unk = runCli(['install', 'warp'], home);
+    assert.equal(unk.status, 1);
+    assert.ok(unk.stderr.includes('unknown harness'));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test('unknown command exits 1 with a hint', () => {

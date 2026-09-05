@@ -4,7 +4,8 @@ import { loadConfig, configPath, homeDir, saveConfig } from './config.js';
 import { agentRows, dayKey, filterEvents, groupByFieldSortedByCost, modelRows, monthKey, projectRows, sessionRows, totalsOf } from './aggregate.js';
 import { budgetExitCode, budgetStatus, renderBudgetLine } from './budget.js';
 import { bold, dim, fmtCost, fmtInt, green, red, renderTable, setColors, yellow } from './format.js';
-import { runMcpServer } from './mcp.js';
+import { findHarness, harnessStatuses } from './install.js';
+import { runMcpServer, mcpSelfTest } from './mcp.js';
 import { GENERATED_AT } from './prices.generated.js';
 import { listPriceRows, normalizeModel } from './pricing.js';
 import { buildReport } from './report.js';
@@ -76,7 +77,8 @@ ${bold('Commands:')}
   budget             set or check a monthly USD budget
   report             export a markdown report
   pricing            show the bundled price table (with provenance)
-  doctor             show detected data sources and diagnostics
+  doctor             show detected data sources, mcp self-test, diagnostics
+  install            register the MCP server in a harness: claude, codex, cursor, gemini
   mcp                expose usage/cost tools to AI agents via MCP (stdio)
 
 ${bold('Options:')}
@@ -100,6 +102,7 @@ ${bold('Examples:')}
   agentstats                                   # day-by-day for all time
   agentstats daily --breakdown model --since 2026-08-01
   agentstats budget set 50                     # $50/month, warns at 80%
+  agentstats install codex                     # register the MCP server with Codex
   agentstats report --out august.md --since 2026-08-01
 
 All data is read locally from ~/.claude, ~/.codex and ~/.gemini.
@@ -393,6 +396,42 @@ function cmdBudget(l: Loaded, flags: Args['flags'], rest: string[]): number {
   return budgetExitCode(status);
 }
 
+function cmdInstall(args: Args, home: string): number {
+  const targetId = args.rest[0];
+  if (!targetId) {
+    const rows = harnessStatuses(home).map((s) => [
+      s.spec.id,
+      s.spec.label,
+      dim(s.file),
+      s.detected ? green('yes') : dim('no'),
+      s.configured ? green('yes') : yellow('no'),
+    ]);
+    console.log(renderTable(['Harness', 'Label', 'Config', 'Detected', 'Configured'], rows, { aligns: ['l', 'l', 'l', 'r', 'r'] }));
+    console.log();
+    console.log(dim(`register with: agentstats install <${harnessStatuses(home).map((s) => s.spec.id).join('|')}>`));
+    console.log(dim('writes a backup next to each config as <file>.agentstats-backup'));
+    console.log(dim('the agentstats command must be on PATH for your harness (npm i -g agentstats)'));
+    return 0;
+  }
+  const spec = findHarness(targetId);
+  if (!spec) fail(`unknown harness: ${targetId} (supported: ${harnessStatuses(home).map((s) => s.spec.id).join(', ')})`);
+  const file = spec.file(home);
+  let result;
+  try {
+    result = spec.install(file);
+  } catch (err) {
+    fail(err instanceof Error ? err.message : String(err));
+  }
+  if (result.result === 'already') {
+    console.log(`agentstats is already registered in ${file}`);
+    return 0;
+  }
+  console.log(green(`registered agentstats MCP server in ${file}`));
+  if (result.backup) console.log(dim(`backup of the previous config: ${result.backup}`));
+  console.log(dim('restart your harness so it picks up the new MCP server; the agentstats command must be on PATH (npm i -g agentstats)'));
+  return 0;
+}
+
 function cmdReport(l: Loaded, flags: Args['flags']): number {
   const md = buildReport(l.events, l.cfg, {
     since: str(flags, 'since'),
@@ -429,15 +468,17 @@ function cmdPricing(flags: Args['flags'], home: string): number {
   return 0;
 }
 
-function cmdDoctor(l: Loaded, flags: Args['flags']): number {
+async function cmdDoctor(l: Loaded, flags: Args['flags']): Promise<number> {
+  const mcpHealth = await mcpSelfTest();
   if (flags.json) {
-    console.log(JSON.stringify({ version: VERSION, home: l.home, configPath: configPath(l.home), config: l.cfg, sources: l.scan.sources }, null, 2));
+    console.log(JSON.stringify({ version: VERSION, home: l.home, configPath: configPath(l.home), config: l.cfg, sources: l.scan.sources, mcp: mcpHealth }, null, 2));
     return 0;
   }
   console.log(`agentstats v${VERSION}`);
   console.log(`home:   ${l.home}`);
   console.log(`config: ${configPath(l.home)} ${existsSync(configPath(l.home)) ? '' : dim('(not created yet)')}`);
   console.log(`prices: table fetched ${GENERATED_AT}`);
+  console.log(`mcp:    ${mcpHealth.ok ? green('ok') : red('self-test failed')}${mcpHealth.ok ? dim(` (${mcpHealth.tools} tools)`) : dim(` - ${mcpHealth.error}`)}`);
   console.log('');
   for (const s of l.scan.sources) {
     const status = s.exists ? green('found') : yellow('not found');
@@ -530,8 +571,10 @@ async function main(): Promise<number> {
       return cmdPricing(args.flags, homeDir());
     case 'doctor': {
       const l = await load(args.flags, homeDir());
-      return cmdDoctor(l, args.flags);
+      return await cmdDoctor(l, args.flags);
     }
+    case 'install':
+      return cmdInstall(args, homeDir());
     default:
       console.error(red(`unknown command: ${cmd}`));
       console.error("run 'agentstats --help' for usage");

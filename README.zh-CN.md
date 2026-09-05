@@ -61,7 +61,8 @@ npm i -g agentstats         # 或全局安装
 | `agentstats budget set 50` | 设置每月 $50 预算（`budget` 查看、`budget clear` 清除） |
 | `agentstats report --out report.md` | 导出独立 Markdown 报告 |
 | `agentstats pricing` | 查看内置价目表（带每个模型的来源标注） |
-| `agentstats doctor` | 显示检测到的数据源、文件/事件数、诊断信息 |
+| `agentstats doctor` | 显示检测到的数据源、MCP 自检、诊断信息 |
+| `agentstats install` | 一键把 MCP 服务器注册进 harness（claude/codex/cursor/gemini） |
 | `agentstats daily --watch` | 实时面板，每隔几秒自动刷新 |
 | `agentstats mcp` | 通过 MCP 把以上所有能力暴露给 AI Agent（stdio） |
 
@@ -78,6 +79,18 @@ agentstats daily --json | jq '.totals'
 
 `agentstats mcp` 是一个零依赖的 [MCP](https://modelcontextprotocol.io) stdio 服务器，把你的用量数据以工具形式暴露给编程 Agent：`usage_summary`、`daily_usage`、`model_breakdown`、`top_sessions`、`budget_status`、`price_lookup`。
 
+**一条命令落地到你的 harness**——`agentstats install` 会把 MCP 注册写进 harness 自己的配置文件（每个被修改的文件旁边都会留一个 `<file>.agentstats-backup` 备份，无法解析的外部配置会被拒绝而不是覆盖）：
+
+```bash
+agentstats install           # 查看各 harness 的检测/配置状态
+agentstats install claude    # Claude Code         -> ~/.claude.json
+agentstats install codex     # Codex CLI/桌面版    -> ~/.codex/config.toml
+agentstats install cursor    # Cursor              -> ~/.cursor/mcp.json
+agentstats install gemini    # Gemini/Antigravity  -> ~/.gemini/settings.json
+```
+
+想手动配置，或使用的 harness 不在上述列表？任何 MCP 客户端都可以：
+
 ```bash
 # Claude Code
 claude mcp add agentstats -- npx agentstats mcp
@@ -91,7 +104,7 @@ args = ["mcp"]
 { "mcpServers": { "agentstats": { "command": "agentstats", "args": ["mcp"] } } }
 ```
 
-配置好之后直接问 Agent："我这周在 AI 上花了多少钱？"——答案来自同一批本地日志，隐私保证与 CLI 完全一致。
+配置好之后直接问 Agent："我这周在 AI 上花了多少钱？"——答案来自同一批本地日志，隐私保证与 CLI 完全一致。`agentstats doctor` 会自检 MCP 服务器，一行命令验证配置是否生效。
 
 ## 成本是怎么算的
 
@@ -137,7 +150,8 @@ args = ["mcp"]
 - [x] 定时 GitHub Action：每日自动刷新内置价目表，以官方定价页为准（`.github/scripts/update-prices.mjs`）
 - [x] `agentstats mcp` —— 通过 MCP 把你自己的统计暴露给 Agent
 - [x] `--watch` 实时面板
-- [ ] Cursor 及其他 IDE Agent（SQLite 日志）
+- [x] 一键安装进 Claude Code / Codex / Cursor / Gemini 配置（`agentstats install`）
+- [ ] Cursor 用量接入（读取 SQLite 日志；上方的 MCP 注册与此无关、今日即可用）
 - [ ] Antigravity 用量接入（如果 Google 未来在本地日志或 API 中暴露用量）
 - [ ] 非 USD 货币
 
@@ -147,7 +161,7 @@ args = ["mcp"]
 
 ```bash
 npm install
-npm test        # 构建并运行测试（27 个用例，基于合成夹具）
+npm test        # 构建并运行测试（33 个用例，基于合成夹具）
 ```
 
 ## License

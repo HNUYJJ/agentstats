@@ -197,6 +197,14 @@ async function toolText(name: string, args: Record<string, unknown>): Promise<st
   }
 }
 
+/** Cap tool output so one huge log collection cannot blow an agent's context window. */
+export const MCP_TEXT_CAP = 20_000;
+
+function capText(text: string): string {
+  if (text.length <= MCP_TEXT_CAP) return text;
+  return text.slice(0, MCP_TEXT_CAP) + `\n... (truncated at ${MCP_TEXT_CAP} of ${text.length} characters - narrow the query)`;
+}
+
 async function dispatch(method: string, params: any): Promise<Record<string, unknown>> {
   switch (method) {
     case 'initialize':
@@ -209,20 +217,48 @@ async function dispatch(method: string, params: any): Promise<Record<string, unk
       return {};
     case 'tools/list':
       return { tools: TOOLS };
+    // capabilities we do not offer answer empty instead of erroring, so
+    // clients that probe them anyway get a clean result
+    case 'resources/list':
+      return { resources: [] };
+    case 'resources/templates/list':
+      return { resourceTemplates: [] };
+    case 'prompts/list':
+      return { prompts: [] };
     case 'tools/call': {
       const name = typeof params?.name === 'string' ? params.name : '';
       if (!name) throw rpcError(-32602, 'missing tool name');
       if (!TOOLS.some((t) => t.name === name)) throw rpcError(-32602, `unknown tool: ${name}`);
+      const rawArgs = params?.arguments ?? {};
+      if (typeof rawArgs !== 'object' || Array.isArray(rawArgs)) {
+        throw rpcError(-32602, 'tool arguments must be an object');
+      }
       let text: string;
       try {
-        text = await toolText(name, (params?.arguments ?? {}) as Record<string, unknown>);
+        text = await toolText(name, rawArgs as Record<string, unknown>);
       } catch (err) {
         return { content: [{ type: 'text', text: `error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
       }
-      return { content: [{ type: 'text', text }] };
+      return { content: [{ type: 'text', text: capText(text) }] };
     }
     default:
       throw rpcError(-32601, `method not found: ${method}`);
+  }
+}
+
+/**
+ * In-process handshake check used by `agentstats doctor` to prove the MCP
+ * server machinery works without spawning a second process.
+ */
+export async function mcpSelfTest(): Promise<{ ok: boolean; tools: number; error?: string }> {
+  try {
+    await dispatch('initialize', { protocolVersion: '2025-06-18' });
+    const listed = (await dispatch('tools/list', {})) as { tools?: unknown[] };
+    const tools = Array.isArray(listed.tools) ? listed.tools.length : 0;
+    if (tools === 0) return { ok: false, tools: 0, error: 'tools/list returned no tools' };
+    return { ok: true, tools };
+  } catch (err) {
+    return { ok: false, tools: 0, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
