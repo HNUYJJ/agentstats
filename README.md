@@ -7,6 +7,7 @@
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 [![node](https://img.shields.io/node/v/agentstats)](./package.json)
 [![dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)](./package.json)
+[![price refresh](https://github.com/HNUYJJ/agentstats/actions/workflows/update-prices.yml/badge.svg)](https://github.com/HNUYJJ/agentstats/actions/workflows/update-prices.yml)
 
 ```text
 $ agentstats daily --since 2026-08-01
@@ -59,10 +60,13 @@ Requires Node 18.17+. No build, no config, no API keys.
 | `agentstats models` | per-model totals, flags unpriced models with `*` |
 | `agentstats session` | per-session totals, top spenders first (`--limit`, `--sort`) |
 | `agentstats agents` | per-agent totals (claude / codex / gemini) |
+| `agentstats projects` | per-project totals (sessions, events, tokens, cost) |
 | `agentstats budget set 50` | track a $50/month budget (`budget`, `budget clear`) |
 | `agentstats report --out report.md` | export a standalone markdown report |
-| `agentstats pricing` | the bundled price table |
+| `agentstats pricing` | the bundled price table, with per-model provenance |
 | `agentstats doctor` | which sources were found, file/event counts, notes |
+| `agentstats daily --watch` | live dashboard, re-renders every few seconds |
+| `agentstats mcp` | expose all of this to AI agents via MCP (stdio) |
 
 Common filters work everywhere:
 
@@ -72,6 +76,25 @@ agentstats session --agent claude,codex --project my-app
 agentstats models --model opus
 agentstats daily --json | jq '.totals'
 ```
+
+## Let your agents check their own spend
+
+`agentstats mcp` is a zero-dependency [MCP](https://modelcontextprotocol.io) stdio server that exposes your usage data to coding agents as tools: `usage_summary`, `daily_usage`, `model_breakdown`, `top_sessions`, `budget_status` and `price_lookup`.
+
+```bash
+# Claude Code
+claude mcp add agentstats -- npx agentstats mcp
+
+# Codex CLI (~/.codex/config.toml)
+[mcp_servers.agentstats]
+command = "agentstats"
+args = ["mcp"]
+
+# Any MCP client (JSON)
+{ "mcpServers": { "agentstats": { "command": "agentstats", "args": ["mcp"] } } }
+```
+
+Then just ask your agent: *"how much did I spend on AI this week?"* Answers come from the same local logs, with the same privacy guarantees as the CLI.
 
 ## How costs are estimated
 
@@ -117,6 +140,8 @@ Model names are normalized aggressively (`openai/gpt-5.6-luna`, `us.anthropic.cl
 ## Roadmap
 
 - [x] Scheduled GitHub Action that auto-refreshes the bundled price table daily from official vendor pricing pages (`.github/scripts/update-prices.mjs`)
+- [x] `agentstats mcp` — expose your own stats to your agents via MCP
+- [x] `--watch` live dashboard mode
 - [ ] Cursor & other IDE agents (SQLite-backed logs)
 - [ ] Antigravity usage ingestion, if Google ever exposes usage in local logs or an API
 - [ ] `--watch` live dashboard mode
@@ -129,7 +154,7 @@ Contributions are welcome. For price corrections, pin the verified value in `MAN
 
 ```bash
 npm install
-npm test        # builds and runs the test suite (25 tests, fixture-based)
+npm test        # builds and runs the test suite (27 tests, fixture-based)
 ```
 
 The test suite parses synthetic fixture logs covering dedupe, cache-write splits, cumulative counters and model switching — no real transcripts are needed or used.

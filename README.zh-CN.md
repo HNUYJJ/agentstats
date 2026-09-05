@@ -5,6 +5,7 @@
 [![CI](https://github.com/HNUYJJ/agentstats/actions/workflows/ci.yml/badge.svg)](https://github.com/HNUYJJ/agentstats/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/agentstats)](https://www.npmjs.com/package/agentstats)
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
+[![price refresh](https://github.com/HNUYJJ/agentstats/actions/workflows/update-prices.yml/badge.svg)](https://github.com/HNUYJJ/agentstats/actions/workflows/update-prices.yml)
 
 ```text
 $ agentstats daily --since 2026-08-01
@@ -56,10 +57,13 @@ npm i -g agentstats         # 或全局安装
 | `agentstats models` | 按模型统计，未定价模型标记 `*` |
 | `agentstats session` | 按会话统计，默认最贵的排前面（`--limit`、`--sort`） |
 | `agentstats agents` | 按工具统计（claude / codex / gemini） |
+| `agentstats projects` | 按项目统计（会话、事件、token、成本） |
 | `agentstats budget set 50` | 设置每月 $50 预算（`budget` 查看、`budget clear` 清除） |
 | `agentstats report --out report.md` | 导出独立 Markdown 报告 |
-| `agentstats pricing` | 查看内置价目表 |
+| `agentstats pricing` | 查看内置价目表（带每个模型的来源标注） |
 | `agentstats doctor` | 显示检测到的数据源、文件/事件数、诊断信息 |
+| `agentstats daily --watch` | 实时面板，每隔几秒自动刷新 |
+| `agentstats mcp` | 通过 MCP 把以上所有能力暴露给 AI Agent（stdio） |
 
 通用过滤参数：
 
@@ -69,6 +73,25 @@ agentstats session --agent claude,codex --project my-app
 agentstats models --model opus
 agentstats daily --json | jq '.totals'
 ```
+
+## 让 Agent 自己查用量
+
+`agentstats mcp` 是一个零依赖的 [MCP](https://modelcontextprotocol.io) stdio 服务器，把你的用量数据以工具形式暴露给编程 Agent：`usage_summary`、`daily_usage`、`model_breakdown`、`top_sessions`、`budget_status`、`price_lookup`。
+
+```bash
+# Claude Code
+claude mcp add agentstats -- npx agentstats mcp
+
+# Codex CLI（~/.codex/config.toml）
+[mcp_servers.agentstats]
+command = "agentstats"
+args = ["mcp"]
+
+# 通用 MCP 客户端（JSON）
+{ "mcpServers": { "agentstats": { "command": "agentstats", "args": ["mcp"] } } }
+```
+
+配置好之后直接问 Agent："我这周在 AI 上花了多少钱？"——答案来自同一批本地日志，隐私保证与 CLI 完全一致。
 
 ## 成本是怎么算的
 
@@ -112,19 +135,19 @@ agentstats daily --json | jq '.totals'
 ## Roadmap
 
 - [x] 定时 GitHub Action：每日自动刷新内置价目表，以官方定价页为准（`.github/scripts/update-prices.mjs`）
+- [x] `agentstats mcp` —— 通过 MCP 把你自己的统计暴露给 Agent
+- [x] `--watch` 实时面板
 - [ ] Cursor 及其他 IDE Agent（SQLite 日志）
 - [ ] Antigravity 用量接入（如果 Google 未来在本地日志或 API 中暴露用量）
-- [ ] `--watch` 实时面板
 - [ ] 非 USD 货币
-- [ ] `agentstats mcp` —— 通过 MCP 把你自己的统计暴露给 Agent
 
-欢迎贡献。价格修正请把核实过的数值钉在 `MANUAL_PRICES` 里——定时刷新只重写生成条目，手动钉价不会被覆盖。
+欢迎贡献。价格修正请把核实过的数值钉在 `MANUAL_PRICES` 里——定时刷新只重写生成条目，手动钉价不会被覆盖。参见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
 
 ## 开发
 
 ```bash
 npm install
-npm test        # 构建并运行测试（25 个用例，基于合成夹具）
+npm test        # 构建并运行测试（27 个用例，基于合成夹具）
 ```
 
 ## License

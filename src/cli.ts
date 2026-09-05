@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 import { existsSync, writeFileSync } from 'node:fs';
 import { loadConfig, configPath, homeDir, saveConfig } from './config.js';
-import { agentRows, dayKey, filterEvents, modelRows, monthKey, sessionRows, totalsOf } from './aggregate.js';
+import { agentRows, dayKey, filterEvents, modelRows, monthKey, projectRows, sessionRows, totalsOf } from './aggregate.js';
 import { budgetExitCode, budgetStatus, renderBudgetLine } from './budget.js';
 import { bold, dim, fmtCost, fmtInt, green, red, renderTable, setColors, yellow } from './format.js';
+import { runMcpServer } from './mcp.js';
 import { listPriceRows, normalizeModel } from './pricing.js';
 import { buildReport } from './report.js';
 import { scanAll, ScanResult } from './scan.js';
 import { AGENT_IDS, AgentId, Config, totalTokens, Totals, UsageEvent } from './types.js';
 import { VERSION } from './version.js';
 
-const VALUE_FLAGS = new Set(['since', 'until', 'agent', 'project', 'model', 'breakdown', 'sort', 'out', 'limit', 'month']);
+const VALUE_FLAGS = new Set(['since', 'until', 'agent', 'project', 'model', 'breakdown', 'sort', 'out', 'limit', 'month', 'watch-interval']);
 
 interface Args {
   cmd: string | null;
@@ -70,10 +71,12 @@ ${bold('Commands:')}
   models             breakdown by model
   session            breakdown by session (top spenders first)
   agents             breakdown by agent (claude / codex / gemini)
+  projects           breakdown by project
   budget             set or check a monthly USD budget
   report             export a markdown report
-  pricing            show the bundled price table
+  pricing            show the bundled price table (with provenance)
   doctor             show detected data sources and diagnostics
+  mcp                expose usage/cost tools to AI agents via MCP (stdio)
 
 ${bold('Options:')}
   --since DATE       only include days >= YYYY-MM-DD (local time)
@@ -86,6 +89,8 @@ ${bold('Options:')}
   --sort KEY         session sort: cost (default) | tokens | date
   --month YYYY-MM    budget month (default: current)
   --out FILE         write report to a file instead of stdout
+  --watch            re-render a table command every few seconds
+  --watch-interval S seconds between refreshes (default 5)
   --json             machine-readable JSON output
   --no-color         disable colors
 
@@ -196,6 +201,7 @@ function cmdDaily(l: Loaded, flags: Args['flags'], monthly: boolean): number {
     console.log(JSON.stringify({
       rows: jsonRows,
       totals: { input: t.input, output: t.output, cacheWrite: t.cacheWrite5m + t.cacheWrite1h, cacheRead: t.cacheRead, totalTokens: tokensOf(t), costUsd: t.cost },
+      budget: budgetStatus(l.all, l.cfg),
     }, null, 2));
     return 0;
   }
@@ -332,6 +338,35 @@ function cmdAgents(l: Loaded, flags: Args['flags']): number {
   return 0;
 }
 
+function cmdProjects(l: Loaded, flags: Args['flags']): number {
+  const rows = projectRows(l.events, l.cfg);
+  if (flags.json) {
+    console.log(JSON.stringify(rows.map((r) => ({
+      project: r.project,
+      sessions: r.sessions,
+      events: r.totals.events,
+      tokens: tokensOf(r.totals),
+      costUsd: r.totals.cost,
+    })), null, 2));
+    return 0;
+  }
+  if (!rows.length) {
+    console.log(dim('no usage found'));
+    return 0;
+  }
+  const table = rows.map((r) => [
+    r.project.length > 40 ? r.project.slice(0, 40) : r.project,
+    fmtInt(r.sessions),
+    fmtInt(r.totals.events),
+    fmtInt(tokensOf(r.totals)),
+    green(fmtCost(r.totals.cost)),
+  ]);
+  console.log(renderTable(['Project', 'Sessions', 'Events', 'Tokens', 'Cost (USD)'], table));
+  console.log();
+  console.log(metaLine(l));
+  return 0;
+}
+
 function cmdBudget(l: Loaded, flags: Args['flags'], rest: string[]): number {
   const sub = rest[0];
   const cfg = l.cfg;
@@ -440,6 +475,30 @@ async function main(): Promise<number> {
   }
   const cmd = args.cmd ?? 'daily';
 
+  if (args.flags.watch) {
+    const watchable = ['daily', 'monthly', 'models', 'agents', 'projects'];
+    if (!watchable.includes(cmd)) fail(`--watch works with: ${watchable.join(', ')}`);
+    if (!process.stdout.isTTY) fail('--watch needs an interactive terminal');
+    const intervalS = Math.max(2, num(args.flags, 'watch-interval') ?? 5);
+    const render = async () => {
+      process.stdout.write('\x1b[2J\x1b[1;1H');
+      const l = await load(args.flags, homeDir());
+      if (cmd === 'daily' || cmd === 'monthly') cmdDaily(l, args.flags, cmd === 'monthly');
+      else if (cmd === 'models') cmdModels(l, args.flags);
+      else if (cmd === 'agents') cmdAgents(l, args.flags);
+      else cmdProjects(l, args.flags);
+      console.log();
+      console.log(dim(`refreshing every ${intervalS}s - Ctrl+C to quit`));
+    };
+    process.on('SIGINT', () => {
+      process.stdout.write('\x1b[0m');
+      process.exit(0);
+    });
+    await render();
+    setInterval(() => void render().catch(() => {}), intervalS * 1000);
+    return 0; // the interval keeps the event loop alive
+  }
+
   switch (cmd) {
     case 'daily':
     case 'monthly': {
@@ -459,6 +518,12 @@ async function main(): Promise<number> {
       const l = await load(args.flags, homeDir());
       return cmdAgents(l, args.flags);
     }
+    case 'projects': {
+      const l = await load(args.flags, homeDir());
+      return cmdProjects(l, args.flags);
+    }
+    case 'mcp':
+      return runMcpServer();
     case 'budget': {
       const l = await load(args.flags, homeDir());
       return cmdBudget(l, args.flags, args.rest);

@@ -125,6 +125,19 @@ test('daily exits 2 when over budget (human output)', () => {
   }
 });
 
+test('projects --json ranks projects by cost', () => {
+  const r = runCli(['projects', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const rows = JSON.parse(r.stdout);
+  assert.equal(rows.length, 3);
+  assert.equal(rows[0].project, 'C--code-web');
+  assert.equal(rows[0].sessions, 3);
+  assert.ok(rows[0].costUsd >= rows[rows.length - 1].costUsd);
+  const human = runCli(['projects']);
+  assert.equal(human.status, 0, human.stderr);
+  assert.ok(human.stdout.includes('Project'));
+});
+
 test('unknown command exits 1 with a hint', () => {
   const r = runCli(['nonsense']);
   assert.equal(r.status, 1);

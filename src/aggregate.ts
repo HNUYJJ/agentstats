@@ -133,4 +133,23 @@ export function agentRows(events: UsageEvent[], cfg?: Config | null): AgentRow[]
   return rows;
 }
 
+export interface ProjectRow {
+  project: string;
+  sessions: number;
+  totals: Totals;
+}
+
+export function projectRows(events: UsageEvent[], cfg?: Config | null): ProjectRow[] {
+  const rows: ProjectRow[] = [];
+  for (const [project, evs] of groupBy(events, (e) => e.project)) {
+    rows.push({
+      project,
+      sessions: new Set(evs.map((e) => e.sessionId)).size,
+      totals: totalsOf(evs, cfg),
+    });
+  }
+  rows.sort((a, b) => b.totals.cost - a.totals.cost);
+  return rows;
+}
+
 export { totalTokens };
