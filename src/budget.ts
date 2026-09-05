@@ -13,19 +13,20 @@ export interface BudgetStatus {
 
 /** Current-month spend vs the configured budget. Null when no budget is set. */
 export function budgetStatus(events: UsageEvent[], cfg: Config, month?: string): BudgetStatus | null {
-  if (!cfg.budget || cfg.budget <= 0) return null;
+  const budget = Number(cfg.budget);
+  if (!Number.isFinite(budget) || budget <= 0) return null;
   const now = new Date();
   const mk = month ?? monthKey(now.getTime());
-  const inMonth = events.filter((e) => monthKey(e.ts) === mk && mk !== 'unknown');
+  const inMonth = events.filter((e) => monthKey(e.ts) === mk);
   const spend = totalsOf(inMonth, cfg).cost;
-  const usedPct = (spend / cfg.budget) * 100;
+  const usedPct = (spend / budget) * 100;
   let projected = spend;
   if (mk === monthKey(now.getTime())) {
     const days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
     projected = now.getDate() > 0 ? (spend / now.getDate()) * days : spend;
   }
   const level: BudgetStatus['level'] = usedPct >= 100 ? 'over' : usedPct >= 80 ? 'warn' : 'ok';
-  return { month: mk, spend, budget: cfg.budget, usedPct, projected, level };
+  return { month: mk, spend, budget, usedPct, projected, level };
 }
 
 export function renderBudgetLine(s: BudgetStatus): string {
@@ -34,8 +35,7 @@ export function renderBudgetLine(s: BudgetStatus): string {
   const body =
     `Budget (${s.month}): ${fmtCost(s.spend)} of ${fmtCost(s.budget)} ` +
     `(${s.usedPct.toFixed(0)}%) [${bar}] projected ${fmtCost(s.projected)}`;
-  const tinted = s.level === 'over' ? red(body) : s.level === 'warn' ? yellow(body) : dim(body);
-  return (s.level === 'over' ? '' : '') + tinted;
+  return s.level === 'over' ? red(body) : s.level === 'warn' ? yellow(body) : dim(body);
 }
 
 export function budgetExitCode(s: BudgetStatus | null): number {

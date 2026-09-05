@@ -1,5 +1,5 @@
 import { createInterface } from 'node:readline';
-import { agentRows, dayKey, filterEvents, modelRows, sessionRows, totalsOf } from './aggregate.js';
+import { agentRows, dayKey, filterEvents, groupByFieldSortedByCost, modelRows, sessionRows, totalsOf } from './aggregate.js';
 import { budgetStatus } from './budget.js';
 import { loadConfig, homeDir } from './config.js';
 import { fmtCost, fmtInt, renderTable, setColors } from './format.js';
@@ -195,15 +195,6 @@ async function toolText(name: string, args: Record<string, unknown>): Promise<st
     default:
       throw rpcError(-32602, `unknown tool: ${name}`);
   }
-}
-
-function groupByFieldSortedByCost(evs: UsageEvent[], field: 'model' | 'agent' | 'project', cfg: ReturnType<typeof loadConfig>): Array<[string, UsageEvent[]]> {
-  const map = new Map<string, UsageEvent[]>();
-  for (const e of evs) {
-    const k = String((e as unknown as Record<string, unknown>)[field] ?? 'unknown');
-    (map.get(k) ?? map.set(k, []).get(k)!).push(e);
-  }
-  return [...map.entries()].sort((a, b) => totalsOf(b[1], cfg).cost - totalsOf(a[1], cfg).cost);
 }
 
 async function dispatch(method: string, params: any): Promise<Record<string, unknown>> {

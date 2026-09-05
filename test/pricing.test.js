@@ -1,6 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { normalizeModel, priceFor, eventCost, PRICES } from '../dist/pricing.js';
+import { loadConfig } from '../dist/config.js';
 
 test('normalizeModel strips provider prefixes, dots and date suffixes', () => {
   assert.equal(normalizeModel('anthropic/claude-3.5-sonnet-20241022'), 'claude-3-5-sonnet');
@@ -8,6 +12,8 @@ test('normalizeModel strips provider prefixes, dots and date suffixes', () => {
   assert.equal(normalizeModel('CLAUDE-OPUS-4-8'), 'claude-opus-4-8');
   assert.equal(normalizeModel('codex-mini-latest'), 'codex-mini-latest');
   assert.equal(normalizeModel('us.anthropic.claude-sonnet-4-5:beta'), 'claude-sonnet-4-5');
+  assert.equal(normalizeModel('claude-opus-4-8@default'), 'claude-opus-4-8');
+  assert.equal(priceFor('claude-opus-4-8@default')?.input, priceFor('claude-opus-4-8')?.input);
 });
 
 // NOTE: assertions are deliberately value-free — the bundled table is
@@ -56,5 +62,30 @@ test('bundled table is normalized and well-formed', () => {
     assert.equal(normalizeModel(k), k, `key ${k} is not in normalized form`);
     assert.ok(Number.isFinite(p.input) && p.input >= 0, `${k}: bad input`);
     assert.ok(Number.isFinite(p.output) && p.output >= 0, `${k}: bad output`);
+  }
+});
+
+test('loadConfig drops invalid budget and pricing overrides instead of producing NaN', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'agentstats-config-'));
+  try {
+    mkdirSync(path.join(dir, '.agentstats'), { recursive: true });
+    writeFileSync(
+      path.join(dir, '.agentstats', 'config.json'),
+      JSON.stringify({
+        budget: 'lots',
+        pricingOverrides: {
+          bad: { input: 'free', output: 2 },
+          negative: { input: -1, output: 2 },
+          good: { input: 1, cachedInput: 'nope', output: 2 },
+        },
+      }),
+      'utf8'
+    );
+    const cfg = loadConfig(dir);
+    assert.equal(cfg.budget, undefined);
+    assert.deepEqual(Object.keys(cfg.pricingOverrides ?? {}), ['good']);
+    assert.equal(cfg.pricingOverrides?.good.cachedInput, undefined); // invalid cached dropped
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

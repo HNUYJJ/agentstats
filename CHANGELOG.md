@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.1 - 2026-09-05
+
+- fix: user-supplied config is sanitized - invalid `budget` or `pricingOverrides` values are dropped instead of surfacing as NaN costs
+- fix: `monthly` no longer leaks an `unknow` row for events without timestamps
+- fix: `session --sort` rejects unknown keys instead of silently falling back to cost
+- perf: per-file scan cache (mtime+size keyed) - `--watch` and repeated MCP tool calls no longer re-parse unchanged logs
+- fix: model names with region qualifiers (`claude-opus-4-8@default`) normalize to the base model
+- `doctor` and `pricing` show when the bundled price table was last fetched
+- README demo output replaced with synthetic data (no personal usage stats in the repo)
+
 ## 0.2.0 - 2026-09-04
 
 - `agentstats mcp` — expose usage, cost, budget and pricing tools to any AI agent over MCP (stdio, zero dependencies). Setup guide in the README.

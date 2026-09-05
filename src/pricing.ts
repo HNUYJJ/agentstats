@@ -25,6 +25,7 @@ export function normalizeModel(raw: string): string {
   if (dot >= 0 && /^(claude|gpt|gemini|o\d|codex)/.test(m.slice(dot + 1))) {
     m = m.slice(dot + 1);
   }
+  m = m.replace(/@[^@]*$/, ''); // region/variant qualifiers: claude-opus-4-8@default
   m = m.replace(/:[^:]*$/, '');
   m = m.replace(/-\d{8}$/, '');
   m = m.replace(/\./g, '-');

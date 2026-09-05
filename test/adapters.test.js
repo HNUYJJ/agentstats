@@ -1,9 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { appendFileSync, rmSync, utimesSync } from 'node:fs';
+import * as path from 'node:path';
 import { scanAll } from '../dist/scan.js';
 import { totalsOf, filterEvents } from '../dist/aggregate.js';
 import { loadConfig } from '../dist/config.js';
-import { fixturesHome } from './helpers.js';
+import { fixturesHome, tmpHome } from './helpers.js';
 
 // fixture config pins prices for the fixture models, so the expected cost
 // below stays valid no matter when the bundled table was last auto-refreshed
@@ -70,4 +72,45 @@ test('filterEvents narrows by project', async () => {
   const { events } = await scanAll(fixturesHome);
   assert.equal(filterEvents(events, { project: 'other' }).length, 1);
   assert.equal(filterEvents(events, { since: '2026-08-21', until: '2026-08-21' }).length, 2);
+});
+
+test('scan cache serves unchanged files and picks up appended events', async () => {
+  const home = tmpHome();
+  try {
+    const first = await scanAll(home);
+    assert.ok(first.events.length > 0);
+
+    // second scan: same result, served from the mtime+size cache
+    const second = await scanAll(home);
+    assert.equal(second.events.length, first.events.length);
+    assert.equal(totalsOf(second.events, cfg).cost, totalsOf(first.events, cfg).cost);
+
+    // append a new usage line to a claude transcript; the size/mtime change
+    // must invalidate the cache so the new event shows up
+    const file = path.join(home, '.claude', 'projects', 'C--code-web', 's1.jsonl');
+    appendFileSync(
+      file,
+      JSON.stringify({
+        type: 'assistant',
+        sessionId: 's1',
+        requestId: 'req_new',
+        timestamp: '2026-08-20T11:00:00.000Z',
+        message: {
+          id: 'msg_new',
+          type: 'message',
+          role: 'assistant',
+          model: 'claude-sonnet-4-5',
+          usage: { input_tokens: 111, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 22 },
+        },
+      }) + '\n'
+    );
+    utimesSync(file, new Date(), new Date());
+
+    const third = await scanAll(home);
+    assert.equal(third.events.length, first.events.length + 1);
+    const added = third.events.find((e) => e.model === 'claude-sonnet-4-5' && e.input === 111 && e.output === 22);
+    assert.ok(added, 'appended event should appear after cache invalidation');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });

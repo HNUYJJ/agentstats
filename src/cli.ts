@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import { existsSync, writeFileSync } from 'node:fs';
 import { loadConfig, configPath, homeDir, saveConfig } from './config.js';
-import { agentRows, dayKey, filterEvents, modelRows, monthKey, projectRows, sessionRows, totalsOf } from './aggregate.js';
+import { agentRows, dayKey, filterEvents, groupByFieldSortedByCost, modelRows, monthKey, projectRows, sessionRows, totalsOf } from './aggregate.js';
 import { budgetExitCode, budgetStatus, renderBudgetLine } from './budget.js';
 import { bold, dim, fmtCost, fmtInt, green, red, renderTable, setColors, yellow } from './format.js';
 import { runMcpServer } from './mcp.js';
+import { GENERATED_AT } from './prices.generated.js';
 import { listPriceRows, normalizeModel } from './pricing.js';
 import { buildReport } from './report.js';
 import { scanAll, ScanResult } from './scan.js';
@@ -93,6 +94,7 @@ ${bold('Options:')}
   --watch-interval S seconds between refreshes (default 5)
   --json             machine-readable JSON output
   --no-color         disable colors
+  --color            force colors even when piped
 
 ${bold('Examples:')}
   agentstats                                   # day-by-day for all time
@@ -177,8 +179,7 @@ function cmdDaily(l: Loaded, flags: Args['flags'], monthly: boolean): number {
     const evs = byPeriod.get(k)!;
     const groups: Array<[string, UsageEvent[]]> = breakdown
       ? groupByFieldSortedByCost(evs, breakdown, l.cfg)
-      : [['', evs]];
-    for (const [label, list] of groups) {
+      : [['', evs]];    for (const [label, list] of groups) {
       const t = totalsOf(list, l.cfg);
       const row = [k, ...(breakdown ? [label] : []), fmtInt(t.input), fmtInt(t.output), fmtInt(t.cacheWrite5m + t.cacheWrite1h), fmtInt(t.cacheRead), fmtInt(tokensOf(t)), green(fmtCost(t.cost))];
       rows.push(row);
@@ -219,15 +220,6 @@ function cmdDaily(l: Loaded, flags: Args['flags'], monthly: boolean): number {
     return budgetExitCode(b);
   }
   return 0;
-}
-
-function groupByFieldSortedByCost(evs: UsageEvent[], field: 'model' | 'agent' | 'project', cfg: Config): Array<[string, UsageEvent[]]> {
-  const map = new Map<string, UsageEvent[]>();
-  for (const e of evs) {
-    const k = String((e as unknown as Record<string, unknown>)[field] ?? 'unknown');
-    (map.get(k) ?? map.set(k, []).get(k)!).push(e);
-  }
-  return [...map.entries()].sort((a, b) => totalsOf(b[1], cfg).cost - totalsOf(a[1], cfg).cost);
 }
 
 function cmdModels(l: Loaded, flags: Args['flags']): number {
@@ -272,6 +264,7 @@ function cmdModels(l: Loaded, flags: Args['flags']): number {
 function cmdSession(l: Loaded, flags: Args['flags']): number {
   const rows = sessionRows(l.events, l.cfg);
   const sort = str(flags, 'sort') ?? 'cost';
+  if (!['cost', 'tokens', 'date'].includes(sort)) fail(`--sort must be cost, tokens or date, got: ${sort}`);
   if (sort === 'tokens') rows.sort((a, b) => tokensOf(b.totals) - tokensOf(a.totals));
   else if (sort === 'date') rows.sort((a, b) => b.date.localeCompare(a.date) || b.totals.cost - a.totals.cost);
   const limit = num(flags, 'limit') ?? 25;
@@ -432,7 +425,7 @@ function cmdPricing(flags: Args['flags'], home: string): number {
     r.source === 'override' || r.source === 'overridden' ? r.source : dim(r.source),  ]);
   console.log(renderTable(['Model', 'Input /MTok', 'Cached /MTok', 'Output /MTok', 'Source'], table, { aligns: ['l', 'r', 'r', 'r', 'l'] }));
   console.log();
-  console.log(dim('prices in USD per 1M tokens; override them via "pricingOverrides" in ' + configPath(home)));
+  console.log(dim(`prices in USD per 1M tokens; table fetched ${GENERATED_AT}; override via "pricingOverrides" in ${configPath(home)}`));
   return 0;
 }
 
@@ -444,6 +437,7 @@ function cmdDoctor(l: Loaded, flags: Args['flags']): number {
   console.log(`agentstats v${VERSION}`);
   console.log(`home:   ${l.home}`);
   console.log(`config: ${configPath(l.home)} ${existsSync(configPath(l.home)) ? '' : dim('(not created yet)')}`);
+  console.log(`prices: table fetched ${GENERATED_AT}`);
   console.log('');
   for (const s of l.scan.sources) {
     const status = s.exists ? green('found') : yellow('not found');

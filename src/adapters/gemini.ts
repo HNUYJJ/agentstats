@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { AgentId, UsageEvent } from '../types.js';
-import { baseName, linesOf, listFiles, mtimeMs, safeInt } from './util.js';
+import { baseName, cachedFileEvents, linesOf, listFiles, mtimeMs, safeInt } from './util.js';
 
 /**
  * Gemini CLI stores sessions under `~/.gemini/tmp/<project-hash>/chats/`.
@@ -14,8 +14,9 @@ import { baseName, linesOf, listFiles, mtimeMs, safeInt } from './util.js';
  *
  * This adapter is deliberately tolerant: it scans both shapes and deep-searches
  * for `usageMetadata`, attributing the nearest enclosing `model` string.
- * Thinking tokens are billed as output by Google. Older CLI versions record
- * no usage at all — `doctor` reports that case explicitly.
+ * Thinking tokens are billed as output by Google. Legacy Gemini CLI versions
+ * and Antigravity record no per-turn usage at all — `doctor` reports that
+ * explicitly instead of showing a silent $0.
  */
 export const geminiAdapter = {
   id: 'gemini' as AgentId,
@@ -31,64 +32,8 @@ export const geminiAdapter = {
     const notes: string[] = [];
 
     for (const file of files) {
-      const hashDir = path.relative(root, file).split(path.sep)[0] || 'unknown';
-      const projectRootFile = path.join(root, hashDir, '.project_root');
-      let project = `gemini:${hashDir.slice(0, 8)}`;
-      try {
-        const pr = readFileSync(projectRootFile, 'utf8').trim().split(/\r?\n/)[0];
-        if (pr) project = baseName(pr);
-      } catch {
-        /* keep hash label */
-      }
-      const fallbackTs = await mtimeMs(file);
-      const isJsonl = file.endsWith('.jsonl');
-
-      const units: Array<{ node: any; ts: number }> = [];
-      if (isJsonl) {
-        for await (const line of linesOf(file)) {
-          try {
-            units.push({ node: JSON.parse(line), ts: 0 });
-          } catch {
-            /* skip bad line */
-          }
-        }
-      } else {
-        let doc: any;
-        try {
-          doc = JSON.parse(readFileSync(file, 'utf8'));
-        } catch {
-          continue;
-        }
-        const fileTs = Date.parse(doc?.lastUpdated) || Date.parse(doc?.startTime) || fallbackTs;
-        const messages = Array.isArray(doc?.messages) ? doc.messages : [doc];
-        for (const msg of messages) {
-          units.push({ node: msg, ts: Date.parse(msg?.timestamp) || fileTs });
-        }
-      }
-
-      const state = { model: null as string | null };
-      for (const { node, ts } of units) {
-        const found: Array<{ um: any; model: string | null }> = [];
-        collect(node, 0, state, found);
-        for (const { um, model } of found) {
-          const prompt = safeInt(um.promptTokenCount);
-          const cached = safeInt(um.cachedContentTokenCount);
-          const output = safeInt(um.candidatesTokenCount) + safeInt(um.thoughtsTokenCount);
-          if (!prompt && !output) continue;
-          events.push({
-            agent: this.id,
-            sessionId: String(node?.sessionId ?? baseName(file).replace(/\.(json|jsonl)$/, '')),
-            project,
-            model: model || 'unknown',
-            ts,
-            input: Math.max(0, prompt - cached),
-            cacheRead: cached,
-            cacheWrite5m: 0,
-            cacheWrite1h: 0,
-            output,
-          });
-        }
-      }
+      const parsed = await cachedFileEvents(file, () => parseGeminiFile(file, root));
+      events.push(...parsed);
     }
 
     if (files.length > 0 && events.length === 0) {
@@ -103,6 +48,70 @@ export const geminiAdapter = {
     return { agent: this.id as AgentId, root, exists: files.length > 0, files: files.length, events, notes };
   },
 };
+
+async function parseGeminiFile(file: string, root: string): Promise<UsageEvent[]> {
+  const hashDir = path.relative(root, file).split(path.sep)[0] || 'unknown';
+  const projectRootFile = path.join(root, hashDir, '.project_root');
+  let project = `gemini:${hashDir.slice(0, 8)}`;
+  try {
+    const pr = readFileSync(projectRootFile, 'utf8').trim().split(/\r?\n/)[0];
+    if (pr) project = baseName(pr);
+  } catch {
+    /* keep hash label */
+  }
+  const fallbackTs = await mtimeMs(file);
+  const isJsonl = file.endsWith('.jsonl');
+  const defaultSessionId = baseName(file).replace(/\.(json|jsonl)$/, '');
+
+  const units: Array<{ node: any; ts: number }> = [];
+  if (isJsonl) {
+    for await (const line of linesOf(file)) {
+      try {
+        units.push({ node: JSON.parse(line), ts: 0 });
+      } catch {
+        /* skip bad line */
+      }
+    }
+  } else {
+    let doc: any;
+    try {
+      doc = JSON.parse(readFileSync(file, 'utf8'));
+    } catch {
+      return [];
+    }
+    const fileTs = Date.parse(doc?.lastUpdated) || Date.parse(doc?.startTime) || fallbackTs;
+    const messages = Array.isArray(doc?.messages) ? doc.messages : [doc];
+    for (const msg of messages) {
+      units.push({ node: msg, ts: Date.parse(msg?.timestamp) || fileTs });
+    }
+  }
+
+  const events: UsageEvent[] = [];
+  const state = { model: null as string | null };
+  for (const { node, ts } of units) {
+    const found: Array<{ um: any; model: string | null }> = [];
+    collect(node, 0, state, found);
+    for (const { um, model } of found) {
+      const prompt = safeInt(um.promptTokenCount);
+      const cached = safeInt(um.cachedContentTokenCount);
+      const output = safeInt(um.candidatesTokenCount) + safeInt(um.thoughtsTokenCount);
+      if (!prompt && !output) continue;
+      events.push({
+        agent: 'gemini',
+        sessionId: String(node?.sessionId ?? defaultSessionId),
+        project,
+        model: model || 'unknown',
+        ts,
+        input: Math.max(0, prompt - cached),
+        cacheRead: cached,
+        cacheWrite5m: 0,
+        cacheWrite1h: 0,
+        output,
+      });
+    }
+  }
+  return events;
+}
 
 /** Deep-search a message subtree for usageMetadata objects, tracking model context. */
 function collect(node: unknown, depth: number, state: { model: string | null }, out: Array<{ um: any; model: string | null }>): void {

@@ -14,6 +14,7 @@ export function dayKey(ts: number): string {
 
 /** Local-time month key, e.g. 2026-08. */
 export function monthKey(ts: number): string {
+  if (!ts) return 'unknown';
   return dayKey(ts).slice(0, 7);
 }
 
@@ -150,6 +151,20 @@ export function projectRows(events: UsageEvent[], cfg?: Config | null): ProjectR
   }
   rows.sort((a, b) => b.totals.cost - a.totals.cost);
   return rows;
+}
+
+/** Group events by a usage field, sub-groups sorted by cost (desc). */
+export function groupByFieldSortedByCost(
+  evs: UsageEvent[],
+  field: 'model' | 'agent' | 'project',
+  cfg?: Config | null
+): Array<[string, UsageEvent[]]> {
+  const map = new Map<string, UsageEvent[]>();
+  for (const e of evs) {
+    const k = String((e as unknown as Record<string, unknown>)[field] ?? 'unknown');
+    (map.get(k) ?? map.set(k, []).get(k)!).push(e);
+  }
+  return [...map.entries()].sort((a, b) => totalsOf(b[1], cfg).cost - totalsOf(a[1], cfg).cost);
 }
 
 export { totalTokens };
