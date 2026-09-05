@@ -1,17 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { fixturesHome, runCli } from './helpers.js';
+import { currentMonth, fixturesHome, runCli, tmpHome } from './helpers.js';
 
 const EXPECTED_TOTAL = 0.0165855;
-
-function tmpHome() {
-  const dir = mkdtempSync(path.join(os.tmpdir(), 'agentstats-test-'));
-  cpSync(fixturesHome, dir, { recursive: true });
-  return dir;
-}
 
 test('daily --json matches fixture totals', () => {
   const r = runCli(['daily', '--json']);
@@ -99,7 +93,7 @@ test('budget set + check round trip, exit code 2 when over', () => {
     assert.equal(set.status, 0, set.stderr);
     assert.ok(existsSync(path.join(home, '.agentstats', 'config.json')));
 
-    const check = runCli(['budget', '--month', '2026-08', '--json'], home);
+    const check = runCli(['budget', '--month', currentMonth(), '--json'], home);
     const status = JSON.parse(check.stdout);
     assert.ok(Math.abs(status.spend - EXPECTED_TOTAL) < 1e-9);
     assert.equal(status.level, 'over');
@@ -107,7 +101,7 @@ test('budget set + check round trip, exit code 2 when over', () => {
 
     const clear = runCli(['budget', 'clear'], home);
     assert.equal(clear.status, 0);
-    const after = JSON.parse(runCli(['budget', '--month', '2026-08', '--json'], home).stdout);
+    const after = JSON.parse(runCli(['budget', '--month', currentMonth(), '--json'], home).stdout);
     assert.equal(after, null);
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -117,8 +111,13 @@ test('budget set + check round trip, exit code 2 when over', () => {
 test('daily exits 2 when over budget (human output)', () => {
   const home = tmpHome();
   try {
-    mkdirSync(path.join(home, '.agentstats'), { recursive: true });
-    writeFileSync(path.join(home, '.agentstats', 'config.json'), JSON.stringify({ budget: 0.005 }), 'utf8');    const r = runCli(['daily'], home);
+    // keep the fixture pricing pins so the spend stays deterministic across
+    // bundled-table refreshes; only the budget itself is added
+    const cfgPath = path.join(home, '.agentstats', 'config.json');
+    const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));
+    cfg.budget = 0.005;
+    writeFileSync(cfgPath, JSON.stringify(cfg), 'utf8');
+    const r = runCli(['daily'], home);
     assert.equal(r.status, 2);
     assert.ok(r.stdout.includes('Budget'));
   } finally {
