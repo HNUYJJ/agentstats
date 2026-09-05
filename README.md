@@ -144,11 +144,9 @@ Model names are normalized aggressively (`openai/gpt-5.6-luna`, `us.anthropic.cl
 - [x] `--watch` live dashboard mode
 - [ ] Cursor & other IDE agents (SQLite-backed logs)
 - [ ] Antigravity usage ingestion, if Google ever exposes usage in local logs or an API
-- [ ] `--watch` live dashboard mode
 - [ ] Non-USD currencies
-- [ ] `agentstats mcp` — expose your own stats to your agents via MCP
 
-Contributions are welcome. For price corrections, pin the verified value in `MANUAL_PRICES` — the scheduled refresh only rewrites generated entries, so pins survive.
+Contributions are welcome - see [CONTRIBUTING.md](./CONTRIBUTING.md). For price corrections, pin the verified value in `MANUAL_PRICES`: the scheduled refresh only rewrites generated entries, so pins survive.
 
 ## Development
 
