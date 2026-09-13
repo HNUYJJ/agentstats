@@ -60,7 +60,20 @@ export function loadConfig(home: string = homeDir()): Config {
 }
 
 export function saveConfig(cfg: Config, home: string = homeDir()): void {
-  const dir = configDir(home);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(dir, 'config.json'), JSON.stringify(cfg, null, 2) + '\n', 'utf8');
+  const p = configPath(home);
+  // preserve keys this version does not know about (future/advanced settings);
+  // known keys always come from the sanitized cfg, undefined ones (e.g. after
+  // "budget clear") are dropped by JSON.stringify
+  let raw: Record<string, unknown> = {};
+  if (existsSync(p)) {
+    try {
+      const parsed = JSON.parse(readFileSync(p, 'utf8')) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) raw = parsed as Record<string, unknown>;
+    } catch {
+      /* unparseable config: start fresh rather than failing the write */
+    }
+  }
+  const merged = { ...raw, ...cfg, budget: cfg.budget, pricingOverrides: cfg.pricingOverrides };
+  mkdirSync(configDir(home), { recursive: true });
+  writeFileSync(p, JSON.stringify(merged, null, 2) + '\n', 'utf8');
 }

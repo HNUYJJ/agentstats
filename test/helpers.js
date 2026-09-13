@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import * as os from 'node:os';
 
 export const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -29,6 +29,9 @@ export function currentMonth() {
 export function tmpHome() {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'agentstats-test-'));
   cpSync(fixturesHome, dir, { recursive: true });
+  // never inherit a scan cache written by earlier runs or code versions
+  rmSync(path.join(dir, '.agentstats', 'scan-cache-v1.json'), { force: true });
+  rmSync(path.join(dir, '.agentstats', 'scan-cache-v1.json.tmp'), { force: true });
   const month = currentMonth();
   const rewrite = (d) => {
     for (const entry of readdirSync(d, { withFileTypes: true })) {
@@ -40,5 +43,17 @@ export function tmpHome() {
     }
   };
   rewrite(dir);
+  // pin every mtime into the current month so events that fall back to the
+  // file mtime (gemini JSONL lines without timestamps) land on a day that
+  // already exists in the fixtures, keeping day/row counts deterministic
+  const pinned = new Date(`${month}-20T10:00:00`);
+  const pinMtimes = (d) => {
+    for (const entry of readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, entry.name);
+      if (entry.isDirectory()) pinMtimes(p);
+      else utimesSync(p, pinned, pinned);
+    }
+  };
+  pinMtimes(dir);
   return dir;
 }

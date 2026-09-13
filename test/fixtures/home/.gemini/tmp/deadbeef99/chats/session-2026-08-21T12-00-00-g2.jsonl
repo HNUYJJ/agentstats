@@ -1,0 +1,2 @@
+{"timestamp":"2026-08-21T12:00:00.000Z","type":"gemini","model":"gemini-2.5-pro","usageMetadata":{"promptTokenCount":500,"cachedContentTokenCount":100,"candidatesTokenCount":40,"thoughtsTokenCount":10}}
+{"timestamp":"2026-08-21T12:01:00.000Z","type":"gemini","model":"gemini-2.5-flash","usageMetadata":{"promptTokenCount":300,"candidatesTokenCount":20}}

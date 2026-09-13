@@ -12,6 +12,7 @@ npm test        # build + fixture-based test suite; no real transcripts needed
 Quick architecture tour:
 
 - `src/adapters/` — one module per supported agent; each parses local logs into normalized `UsageEvent`s
+- `src/cache.ts` — persistent scan cache; if you change any adapter so that it produces different events for unchanged files (parser fix, new event source), bump `CACHE_VERSION` so cached results from older builds are invalidated
 - `src/aggregate.ts` — grouping/filtering helpers shared by the CLI and the MCP server
 - `src/pricing.ts` + `src/prices.generated.ts` — model-name normalization, price lookup, cost math; the generated table is auto-refreshed by a scheduled GitHub Action
 - `src/cli.ts` — the command surface; `src/mcp.ts` — the MCP stdio server

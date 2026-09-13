@@ -34,7 +34,8 @@ Total       3,459,976   539,780   180,224   69,196,856  73,376,836      $39.95
 
 - **零依赖** —— 只用 Node 标准库，无任何第三方包，`npx` 秒开。
 - **纯本地、完全离线** —— 只读 `~/.claude`、`~/.codex`、`~/.gemini`；不联网、不需要 API key、无遥测。
-- **正确的 token 计算** —— 处理了 Anthropic 缓存写入（5m/1h TTL，1.25x/2x 计价）、OpenAI 缓存折扣、Gemini 思考 token 计费、重试消息去重、累计/增量计数器、单会话内切换模型等所有脏细节。
+- **正确的 token 计算** —— 处理了 Anthropic 缓存写入（5m/1h TTL，1.25x/2x 计价）、OpenAI 缓存折扣、Gemini 思考 token 计费、重试消息去重、累计/增量计数器、Codex 回合末尾的用量重复广播、单会话内切换模型等所有脏细节。
+- **重复运行秒出** —— 持久化扫描缓存（按文件 mtime+size 失效，存于 `~/.agentstats/`）让第二次运行只解析有变化的部分；多 GB 历史从数秒降到毫秒级。用 `AGENTSTATS_NO_CACHE=1` 可关闭。
 - **预算护栏** —— 设置月度美元预算，80% 时警告，超过 100% 退出码为 2，方便接入 CI 或 shell 提示符。
 - **机器可读** —— 所有分析命令都支持 `--json`。
 
@@ -58,6 +59,7 @@ npm i -g agentstats         # 或全局安装
 | `agentstats session` | 按会话统计，默认最贵的排前面（`--limit`、`--sort`） |
 | `agentstats agents` | 按工具统计（claude / codex / gemini） |
 | `agentstats projects` | 按项目统计（会话、事件、token、成本） |
+| `agentstats limits` | Codex 限流窗口（5 小时 + 每周）：已用百分比、重置倒计时（读取本地日志） |
 | `agentstats budget set 50` | 设置每月 $50 预算（`budget` 查看、`budget clear` 清除） |
 | `agentstats report --out report.md` | 导出独立 Markdown 报告 |
 | `agentstats pricing` | 查看内置价目表（带每个模型的来源标注） |
@@ -77,7 +79,7 @@ agentstats daily --json | jq '.totals'
 
 ## 让 Agent 自己查用量
 
-`agentstats mcp` 是一个零依赖的 [MCP](https://modelcontextprotocol.io) stdio 服务器，把你的用量数据以工具形式暴露给编程 Agent：`usage_summary`、`daily_usage`、`model_breakdown`、`top_sessions`、`budget_status`、`price_lookup`。
+`agentstats mcp` 是一个零依赖的 [MCP](https://modelcontextprotocol.io) stdio 服务器，把你的用量数据以工具形式暴露给编程 Agent：`usage_summary`、`daily_usage`、`model_breakdown`、`top_sessions`、`budget_status`、`rate_limits`、`price_lookup`。
 
 **一条命令落地到你的 harness**——`agentstats install` 会把 MCP 注册写进 harness 自己的配置文件（每个被修改的文件旁边都会留一个 `<file>.agentstats-backup` 备份，无法解析的外部配置会被拒绝而不是覆盖）：
 
@@ -88,6 +90,18 @@ agentstats install codex     # Codex CLI/桌面版    -> ~/.codex/config.toml
 agentstats install cursor    # Cursor              -> ~/.cursor/mcp.json
 agentstats install gemini    # Gemini/Antigravity  -> ~/.gemini/settings.json
 ```
+
+**安装会自我验证。** 写完配置后，它会立即拉起刚注册的那条命令并完成一次完整的 MCP 握手 + 工具列表确认——PATH 错误、Windows 的 `.cmd` shim 问题、配置损坏都能当场发现，而不是等你下次启动 harness（`--no-verify` 可跳过）。启动命令按运行环境自动选择：优先全局命令（Windows 上经 `cmd /c`），否则回退到 `node <绝对路径 dist/cli.js>`，因此 `npx agentstats install codex` 也能得到可用的注册。已注册过的配置（包括 `[mcp_servers."agentstats"]` 这类带引号的 TOML 写法）会被识别，不会写入重复段落。
+
+```text
+$ agentstats install codex
+registered agentstats MCP server in ~/.codex/config.toml
+launch: agentstats mcp (via the global agentstats command)
+verifying the registered command spawns and answers MCP...
+spawn check ok (7 tools) - restart your harness so it picks up the MCP server
+```
+
+`agentstats doctor --deep` 可以随时手动执行同样的端到端拉起检查。
 
 想手动配置，或使用的 harness 不在上述列表？任何 MCP 客户端都可以：
 
@@ -131,13 +145,15 @@ args = ["mcp"]
 | 工具 | 数据源 | 状态 |
 |---|---|---|
 | Claude Code | `~/.claude/projects/**/*.jsonl` | ✅ 完整支持 |
-| Codex CLI / 桌面版 | `~/.codex/sessions/**/*.jsonl` | ✅ 完整支持 |
+| Codex CLI / 桌面版 | `~/.codex/sessions/**/*.jsonl` | ✅ 完整支持，含限流窗口（`limits`） |
 | Gemini CLI（已停服，2026-06-18） | `~/.gemini/tmp/**/chats/session-*.json` | ✅ 支持读取记录了用量的历史会话 |
 | Antigravity CLI / 桌面版 | — | ❌ Google 在 Antigravity 本地日志中不记录逐轮 token 用量；检测到 `~/.gemini/antigravity` 时 `doctor` 会明确说明 |
 
 ## FAQ
 
 **会上传任何数据吗？** 不会。整个 CLI 零网络请求，只读本地文件。
+
+**会写什么？** 只有两处，都在 `~/.agentstats/` 下：`config.json`（仅在你设置预算或价格覆盖时创建）和 `scan-cache-v1.json`（按文件 mtime+size 键控的解析缓存，让重复运行秒出——设 `AGENTSTATS_NO_CACHE=1` 或删掉该文件即可跳过，缓存会自动重建）。日志内容永远不会离开你的机器。
 
 **为什么和运营商账单对不上？** 估算用牌价；企业折扣、batch 优惠、订阅套餐都不同。它适合做相对比较和预算跟踪。
 
@@ -151,6 +167,7 @@ args = ["mcp"]
 - [x] `agentstats mcp` —— 通过 MCP 把你自己的统计暴露给 Agent
 - [x] `--watch` 实时面板
 - [x] 一键安装进 Claude Code / Codex / Cursor / Gemini 配置（`agentstats install`）
+- [ ] Claude Code / Gemini CLI 的限流窗口（如果它们的本地日志未来暴露；Codex 现已通过 `agentstats limits` 支持）
 - [ ] Cursor 用量接入（读取 SQLite 日志；上方的 MCP 注册与此无关、今日即可用）
 - [ ] Antigravity 用量接入（如果 Google 未来在本地日志或 API 中暴露用量）
 - [ ] 非 USD 货币
@@ -161,7 +178,7 @@ args = ["mcp"]
 
 ```bash
 npm install
-npm test        # 构建并运行测试（33 个用例，基于合成夹具）
+npm test        # 构建并运行测试（47 个用例，基于合成夹具）
 ```
 
 ## License

@@ -1,11 +1,13 @@
+import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { agentRows, dayKey, filterEvents, groupByFieldSortedByCost, modelRows, sessionRows, totalsOf } from './aggregate.js';
 import { budgetStatus } from './budget.js';
 import { loadConfig, homeDir } from './config.js';
 import { fmtCost, fmtInt, renderTable, setColors } from './format.js';
+import { renderLimitsText } from './limits.js';
 import { listPriceRows, normalizeModel, priceFor } from './pricing.js';
 import { scanAll } from './scan.js';
-import { AGENT_IDS, AgentId, totalTokens, UsageEvent } from './types.js';
+import { AGENT_IDS, AgentId, RateLimitSnapshot, totalTokens, UsageEvent } from './types.js';
 import { VERSION } from './version.js';
 
 /**
@@ -73,6 +75,11 @@ const TOOLS: ToolDef[] = [
     inputSchema: { type: 'object', properties: {} },
   },
   {
+    name: 'rate_limits',
+    description: 'Rate-limit windows reported in the local logs (Codex: 5-hour and weekly windows, percent used, reset time). Helps decide whether to keep working or wait for a reset.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
     name: 'price_lookup',
     description: 'Look up the bundled per-million-token price (with provenance) for a model.',
     inputSchema: { type: 'object', properties: { model: { type: 'string', description: 'model name, e.g. claude-opus-4-8' } }, required: ['model'] },
@@ -86,6 +93,13 @@ async function loadEvents(args: Record<string, unknown>): Promise<UsageEvent[]> 
     only = agentArg.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean) as AgentId[];
     const bad = only.filter((a) => !AGENT_IDS.includes(a));
     if (bad.length) throw new Error(`unknown agent(s): ${bad.join(', ')} (supported: ${AGENT_IDS.join(', ')})`);
+  }
+  for (const k of ['since', 'until'] as const) {
+    const v = args[k];
+    if (v === undefined) continue;
+    if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+      throw new Error(`${k} must be a YYYY-MM-DD date string`);
+    }
   }
   const { events } = await scanAll(homeDir(), only);
   return filterEvents(events, {
@@ -176,6 +190,11 @@ async function toolText(name: string, args: Record<string, unknown>): Promise<st
       if (!status) return 'no budget configured (set one with: agentstats budget set <usd-amount>)';
       return `Month ${status.month}: ${fmtCost(status.spend)} of ${fmtCost(status.budget)} (${status.usedPct.toFixed(0)}% used), projected ${fmtCost(status.projected)} - level: ${status.level}`;
     }
+    case 'rate_limits': {
+      const { limits } = await scanAll(homeDir());
+      if (!limits.length) return 'no rate-limit information found in the local logs (Codex records it with usage; Claude Code and Gemini CLI do not)';
+      return renderLimitsText(limits);
+    }
     case 'price_lookup': {
       const model = typeof args['model'] === 'string' ? args['model'] : '';
       if (!model) throw new Error("missing required argument: model");
@@ -260,6 +279,69 @@ export async function mcpSelfTest(): Promise<{ ok: boolean; tools: number; error
   } catch (err) {
     return { ok: false, tools: 0, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+export interface SpawnProbeResult {
+  ok: boolean;
+  tools?: number;
+  error?: string;
+}
+
+/**
+ * Spawn the exact command a harness would run (`command` + `args`) and do a
+ * full initialize + tools/list round-trip. This is the end-to-end proof that
+ * an `agentstats install` registration actually works on this machine -
+ * the in-process self-test cannot catch a wrong PATH, a broken shim or a
+ * shell-quoting problem.
+ */
+export function probeMcpSpawn(launch: { command: string; args: string[] }, timeoutMs = 15_000): Promise<SpawnProbeResult> {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(launch.command, launch.args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (err) {
+      resolve({ ok: false, error: `spawn failed: ${err instanceof Error ? err.message : String(err)}` });
+      return;
+    }
+    let done = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let rl: ReturnType<typeof createInterface> | undefined;
+    const finish = (result: SpawnProbeResult): void => {
+      if (done) return;
+      done = true;
+      if (timer) clearTimeout(timer);
+      rl?.close();
+      child.removeAllListeners('error');
+      child.kill();
+      resolve(result);
+    };
+    timer = setTimeout(() => finish({ ok: false, error: `timed out after ${timeoutMs}ms` }), timeoutMs);
+    child.on('error', (err) => finish({ ok: false, error: `spawn failed: ${err.message}` }));
+
+    let buffer = '';
+    rl = createInterface({ input: child.stdout!, crlfDelay: Infinity });
+    rl.on('line', (line) => {
+      buffer += (buffer ? '\n' : '') + line;
+      let msg: any;
+      try {
+        msg = JSON.parse(line);
+      } catch {
+        return;
+      }
+      if (msg?.result?.serverInfo) {
+        // initialize answered; ask for the tool list
+        child.stdin!.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }) + '\n');
+        return;
+      }
+      if (msg?.id === 2) {
+        const tools = Array.isArray(msg.result?.tools) ? msg.result.tools.length : 0;
+        finish(tools > 0 ? { ok: true, tools } : { ok: false, error: 'tools/list returned no tools' });
+      }
+    });
+    child.on('exit', (code) => finish({ ok: false, error: `exited with code ${code}${buffer ? `; output: ${buffer.slice(0, 300)}` : ''}` }));
+
+    child.stdin!.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'agentstats-doctor', version: VERSION } } }) + '\n');
+  });
 }
 
 /** Run the stdio MCP server until stdin closes. */

@@ -1,6 +1,6 @@
 {
   "name": "agentstats",
-  "version": "0.3.0",
+  "version": "0.5.0",
   "description": "Usage & cost analytics for AI coding agents (Claude Code, Codex CLI, Gemini CLI). 100% local, zero dependencies, works offline.",
   "license": "MIT",
   "type": "module",
@@ -20,7 +20,7 @@
   "scripts": {
     "build": "tsc",
     "pretest": "npm run build",
-    "test": "node --test test/pricing.test.js test/adapters.test.js test/cli.test.js test/mcp.test.js",
+    "test": "node --test test/pricing.test.js test/adapters.test.js test/install.test.js test/cli.test.js test/mcp.test.js",
     "prepublishOnly": "npm test",
     "dev": "tsc --watch"
   },

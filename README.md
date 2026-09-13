@@ -36,7 +36,8 @@ If you run multiple coding agents, you already have the problem: token spend is 
 
 - **Zero dependencies** — one static TypeScript bundle on top of the Node standard library. Nothing to audit, instant `npx`.
 - **100% local & offline** — reads `~/.claude`, `~/.codex`, `~/.gemini`; no network access, no API keys, no telemetry. Your transcripts never leave the machine.
-- **Correct token math** — handles Anthropic cache writes (1.25x/2x input, 5m/1h TTL), OpenAI cached-input discounts, Gemini thinking-token billing, retried-message dedupe, cumulative-vs-delta token counters, and per-session model switching.
+- **Correct token math** — handles Anthropic cache writes (1.25x/2x input, 5m/1h TTL), OpenAI cached-input discounts, Gemini thinking-token billing, retried-message dedupe, cumulative-vs-delta token counters, Codex turn-end usage re-broadcasts, and per-session model switching.
+- **Instant repeat runs** — a persistent scan cache (mtime+size keyed, stored in `~/.agentstats/`) means the second run reads only what changed; multi-GB histories go from seconds to milliseconds. Disable with `AGENTSTATS_NO_CACHE=1`.
 - **Budget guardrails** — set a monthly USD budget; `agentstats` warns at 80% and exits with code 2 past 100%, so your CI or shell prompt can react.
 - **Machine-readable** — `--json` on every analytical command for scripting and dashboards.
 
@@ -60,6 +61,7 @@ Requires Node 18.17+. No build, no config, no API keys.
 | `agentstats session` | per-session totals, top spenders first (`--limit`, `--sort`) |
 | `agentstats agents` | per-agent totals (claude / codex / gemini) |
 | `agentstats projects` | per-project totals (sessions, events, tokens, cost) |
+| `agentstats limits` | Codex rate-limit windows (5h + weekly) from local logs — percent used, reset countdown |
 | `agentstats budget set 50` | track a $50/month budget (`budget`, `budget clear`) |
 | `agentstats report --out report.md` | export a standalone markdown report |
 | `agentstats pricing` | the bundled price table, with per-model provenance |
@@ -79,7 +81,7 @@ agentstats daily --json | jq '.totals'
 
 ## Let your agents check their own spend
 
-`agentstats mcp` is a zero-dependency [MCP](https://modelcontextprotocol.io) stdio server that exposes your usage data to coding agents as tools: `usage_summary`, `daily_usage`, `model_breakdown`, `top_sessions`, `budget_status` and `price_lookup`.
+`agentstats mcp` is a zero-dependency [MCP](https://modelcontextprotocol.io) stdio server that exposes your usage data to coding agents as tools: `usage_summary`, `daily_usage`, `model_breakdown`, `top_sessions`, `budget_status`, `rate_limits` and `price_lookup`.
 
 **One command lands it in your harness** — `agentstats install` writes the MCP registration into the harness's own config (keeping a `<file>.agentstats-backup` next to every file it touches, and refusing to touch configs it cannot parse):
 
@@ -90,6 +92,18 @@ agentstats install codex     # Codex CLI/desktop   -> ~/.codex/config.toml
 agentstats install cursor    # Cursor              -> ~/.cursor/mcp.json
 agentstats install gemini    # Gemini/Antigravity  -> ~/.gemini/settings.json
 ```
+
+**The install verifies itself.** After writing the config it spawns the exact command it registered and expects a full MCP handshake + tool list — so a broken PATH, a Windows `.cmd` shim problem or a bad config is caught immediately, not the next time you start your harness (`--no-verify` skips this). The launch command is chosen for the machine it runs on: the global binary when available (via `cmd /c` on Windows), otherwise `node <absolute dist/cli.js>` so `npx agentstats install codex` works too. Already-registered configs — including quoted TOML spellings like `[mcp_servers."agentstats"]` — are detected and never duplicated.
+
+```bash
+$ agentstats install codex
+registered agentstats MCP server in ~/.codex/config.toml
+launch: agentstats mcp (via the global agentstats command)
+verifying the registered command spawns and answers MCP...
+spawn check ok (7 tools) - restart your harness so it picks up the MCP server
+```
+
+`agentstats doctor --deep` runs the same end-to-end spawn check on demand.
 
 Prefer doing it by hand, or use a harness not listed above? Any MCP client works:
 
@@ -133,7 +147,7 @@ Model names are normalized aggressively (`openai/gpt-5.6-luna`, `us.anthropic.cl
 | Agent | Source | Status |
 |---|---|---|
 | Claude Code | `~/.claude/projects/**/*.jsonl` | ✅ full |
-| Codex CLI / desktop | `~/.codex/sessions/**/*.jsonl` | ✅ full |
+| Codex CLI / desktop | `~/.codex/sessions/**/*.jsonl` | ✅ full, incl. rate-limit windows (`limits`) |
 | Gemini CLI (legacy, shut down 2026-06-18) | `~/.gemini/tmp/**/chats/session-*.json` | ✅ historical sessions that recorded usage |
 | Antigravity CLI / desktop | — | ❌ Google does not record per-turn token usage in local Antigravity logs; `doctor` says so explicitly when it detects `~/.gemini/antigravity` |
 
@@ -142,6 +156,8 @@ Model names are normalized aggressively (`openai/gpt-5.6-luna`, `us.anthropic.cl
 **Is any data uploaded?** No. The CLI performs zero network I/O. Point `doctor` at a fresh machine and you'll see it only ever reads local files.
 
 **Where does it read from?** `~/.claude/projects`, `~/.codex/sessions` (plus `archived_sessions`), `~/.gemini/tmp`. Override the home root with the `AGENTSTATS_HOME` environment variable.
+
+**Does it write anything?** Two small things, both under `~/.agentstats/`: `config.json` (only if you set a budget or price overrides) and `scan-cache-v1.json` (parsed events keyed by file mtime+size, so repeat runs are instant — set `AGENTSTATS_NO_CACHE=1` or delete the file to skip; it is rebuilt automatically). Transcript contents never leave your machine.
 
 **Does it slow my agent down?** No. It's a read-only CLI you run on demand; agents never touch it.
 
@@ -155,6 +171,7 @@ Model names are normalized aggressively (`openai/gpt-5.6-luna`, `us.anthropic.cl
 - [x] `agentstats mcp` — expose your own stats to your agents via MCP
 - [x] `--watch` live dashboard mode
 - [x] One-command install into Claude Code / Codex / Cursor / Gemini configs (`agentstats install`)
+- [ ] Rate-limit windows for Claude Code / Gemini CLI, if their local logs ever expose them (Codex is covered today via `agentstats limits`)
 - [ ] Cursor usage ingestion from SQLite logs (the MCP registration above is separate and works today)
 - [ ] Antigravity usage ingestion, if Google ever exposes usage in local logs or an API
 - [ ] Non-USD currencies
@@ -165,7 +182,7 @@ Contributions are welcome - see [CONTRIBUTING.md](./CONTRIBUTING.md). For price 
 
 ```bash
 npm install
-npm test        # builds and runs the test suite (33 tests, fixture-based)
+npm test        # builds and runs the test suite (47 tests, fixture-based)
 ```
 
 The test suite parses synthetic fixture logs covering dedupe, cache-write splits, cumulative counters and model switching — no real transcripts are needed or used.

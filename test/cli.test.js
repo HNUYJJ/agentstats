@@ -5,7 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { currentMonth, fixturesHome, runCli, tmpHome } from './helpers.js';
 
-const EXPECTED_TOTAL = 0.0165855;
+const EXPECTED_TOTAL = 0.01983275;
 
 test('daily --json matches fixture totals', () => {
   const r = runCli(['daily', '--json']);
@@ -14,7 +14,15 @@ test('daily --json matches fixture totals', () => {
   assert.equal(out.rows.length, 3);
   assert.equal(out.rows[0].date, '2026-08-20');
   assert.ok(Math.abs(out.totals.costUsd - EXPECTED_TOTAL) < 1e-9);
-  assert.equal(out.totals.totalTokens, 1000 + 500 + 2000 + 300 + 100 + 40 + 10 + 50 + 7 + 3 + 500 + 100 + 80 + 600 + 400 + 200 + 1500 + 500 + 300 + 800 + 200 + 150);
+  assert.equal(
+    out.totals.totalTokens,
+    // claude s1/s2/s3/s4
+    1000 + 500 + 2000 + 300 + 100 + 40 + 10 + 50 + 7 + 3 + 500 + 100 + 80 +
+      // codex cx1 (2 deltas) + sess-a (2 records) + sess-b (2 deltas, dedup applied)
+      600 + 400 + 200 + 1500 + 500 + 300 + 1200 + 2300 + 1200 + 2300 +
+      // gemini g1 JSON + g2 JSONL
+      800 + 200 + 150 + 550 + 320
+  );
 });
 
 test('daily --breakdown model adds a model column', () => {
@@ -49,10 +57,19 @@ test('session --json ranks top spenders first', () => {
   const r = runCli(['session', '--json', '--limit', '0']);
   assert.equal(r.status, 0, r.stderr);
   const rows = JSON.parse(r.stdout);
-  assert.equal(rows.length, 6);
+  assert.equal(rows.length, 9);
   assert.equal(rows[0].session, 's1');
   assert.equal(rows[0].agent, 'claude');
   assert.ok(rows[0].costUsd >= rows[rows.length - 1].costUsd);
+});
+
+test('session --limit must be a non-negative number', () => {
+  const bad = runCli(['session', '--limit', 'abc']);
+  assert.equal(bad.status, 1);
+  assert.ok(bad.stderr.includes('--limit'));
+  const neg = runCli(['session', '--limit', '-3']);
+  assert.equal(neg.status, 1);
+  assert.ok(neg.stderr.includes('--limit'));
 });
 
 test('agents --json lists all three agents', () => {
@@ -68,7 +85,32 @@ test('doctor --json reports sources and gemini note', () => {
   const out = JSON.parse(r.stdout);
   assert.equal(out.sources.length, 3);
   const gemini = out.sources.find((s) => s.agent === 'gemini');
-  assert.equal(gemini.events, 1);
+  assert.equal(gemini.events, 3);
+  assert.ok(out.cache?.enabled, 'doctor reports the persistent cache');
+});
+
+test('budget set preserves unknown config keys', () => {
+  const home = tmpHome();
+  try {
+    const cfgPath = path.join(home, '.agentstats', 'config.json');
+    const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));
+    cfg.futureSetting = { keep: true };
+    writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), 'utf8');
+
+    const set = runCli(['budget', 'set', '10'], home);
+    assert.equal(set.status, 0, set.stderr);
+    const after = JSON.parse(readFileSync(cfgPath, 'utf8'));
+    assert.equal(after.budget, 10);
+    assert.deepEqual(after.futureSetting, { keep: true }, 'unknown keys survive a config write');
+
+    const clear = runCli(['budget', 'clear'], home);
+    assert.equal(clear.status, 0);
+    const cleared = JSON.parse(readFileSync(cfgPath, 'utf8'));
+    assert.equal(cleared.budget, undefined);
+    assert.deepEqual(cleared.futureSetting, { keep: true });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test('report writes markdown to a file', () => {
@@ -152,18 +194,19 @@ test('install codex appends toml block idempotently with a backup', () => {
     mkdirSync(path.dirname(cfg), { recursive: true });
     writeFileSync(cfg, 'model = "gpt-6-astra"\n');
 
-    const first = runCli(['install', 'codex'], home);
+    const first = runCli(['install', 'codex', '--no-verify'], home);
     assert.equal(first.status, 0, first.stderr);
     const text = readFileSync(cfg, 'utf8');
     assert.ok(text.startsWith('model = "gpt-6-astra"\n'), 'original content must be preserved');
     assert.ok(text.includes('[mcp_servers.agentstats]'));
-    assert.ok(text.includes('command = "agentstats"'));
+    assert.ok(/command = "(.+)"/.test(text), 'a command is registered');
+    assert.ok(text.includes('"mcp"'), 'the mcp subcommand is wired');
     const backup = cfg + '.agentstats-backup';
     assert.ok(existsSync(backup));
     assert.equal(readFileSync(backup, 'utf8'), 'model = "gpt-6-astra"\n');
 
-    const second = runCli(['install', 'codex'], home);
-    assert.equal(second.status, 0, second.stderr);
+    const second = runCli(['install', 'codex', '--no-verify'], home);
+    assert.equal(second.status, 0);
     assert.ok(second.stdout.includes('already'));
     assert.equal(text.split('[mcp_servers.agentstats]').length - 1, 1);
   } finally {
@@ -176,13 +219,14 @@ test('install claude merges mcpServers and preserves existing entries', () => {
   try {
     const cfg = path.join(home, '.claude.json');
     writeFileSync(cfg, JSON.stringify({ numStartups: 3, mcpServers: { other: { command: 'x' } } }));
-    const r = runCli(['install', 'claude'], home);
+    const r = runCli(['install', 'claude', '--no-verify'], home);
     assert.equal(r.status, 0, r.stderr);
     const doc = JSON.parse(readFileSync(cfg, 'utf8'));
     assert.equal(doc.numStartups, 3);
     assert.equal(doc.mcpServers.other.command, 'x');
-    assert.equal(doc.mcpServers.agentstats.command, 'agentstats');
-    assert.equal(doc.mcpServers.agentstats.args[0], 'mcp');
+    assert.equal(typeof doc.mcpServers.agentstats.command, 'string');
+    assert.ok(doc.mcpServers.agentstats.command.length > 0);
+    assert.deepEqual(doc.mcpServers.agentstats.args.slice(-1), ['mcp']);
     assert.ok(existsSync(cfg + '.agentstats-backup'));
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -194,7 +238,7 @@ test('install refuses invalid foreign JSON and unknown harness names', () => {
   try {
     const cfg = path.join(home, '.claude.json');
     writeFileSync(cfg, '{not json');
-    const bad = runCli(['install', 'claude'], home);
+    const bad = runCli(['install', 'claude', '--no-verify'], home);
     assert.equal(bad.status, 1);
     assert.ok(bad.stderr.includes('not valid JSON'));
     assert.equal(readFileSync(cfg, 'utf8'), '{not json', 'refused file must stay untouched');
@@ -205,6 +249,24 @@ test('install refuses invalid foreign JSON and unknown harness names', () => {
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+test('limits surfaces the newest Codex rate-limit snapshot', () => {
+  const json = runCli(['limits', '--json']);
+  assert.equal(json.status, 0, json.stderr);
+  const snapshots = JSON.parse(json.stdout);
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0].agent, 'codex');
+  assert.equal(snapshots[0].primary.usedPercent, 79);
+  assert.equal(snapshots[0].primary.windowMinutes, 300);
+  assert.equal(snapshots[0].secondary.usedPercent, 38);
+  assert.equal(snapshots[0].planType, 'plus');
+
+  const human = runCli(['limits']);
+  assert.equal(human.status, 0, human.stderr);
+  assert.ok(human.stdout.includes('5h window'));
+  assert.ok(human.stdout.includes('79%'));
+  assert.ok(human.stdout.includes('7d window'));
 });
 
 test('unknown command exits 1 with a hint', () => {

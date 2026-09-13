@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import * as path from 'node:path';
-import { AgentId, UsageEvent } from '../types.js';
+import { AgentId, ParsedFile, UsageEvent } from '../types.js';
+import { PersistentCache } from '../cache.js';
 import { baseName, cachedFileEvents, linesOf, listFiles, mtimeMs, safeInt } from './util.js';
 
 /**
@@ -18,7 +19,7 @@ export const claudeAdapter = {
   id: 'claude' as AgentId,
   rootOf: (home: string) => path.join(home, '.claude', 'projects'),
 
-  async scan(home: string) {
+  async scan(home: string, cache?: PersistentCache) {
     const root = this.rootOf(home);
     const files = await listFiles(root, (n) => n.endsWith('.jsonl'));
     const events: UsageEvent[] = [];
@@ -26,14 +27,14 @@ export const claudeAdapter = {
 
     for (const file of files) {
       const project = path.relative(root, file).split(path.sep)[0] || 'unknown';
-      const parsed = await cachedFileEvents(file, () => parseClaudeFile(file, project));
-      events.push(...parsed);
+      const parsed = await cachedFileEvents(file, () => parseClaudeFile(file, project), cache);
+      events.push(...parsed.events);
     }
     return { agent: this.id as AgentId, root, exists: files.length > 0 || existsSync(root), files: files.length, events, notes };
   },
 };
 
-async function parseClaudeFile(file: string, project: string): Promise<UsageEvent[]> {
+async function parseClaudeFile(file: string, project: string): Promise<ParsedFile> {
   const events: UsageEvent[] = [];
   const seen = new Set<string>();
   const fallbackTs = await mtimeMs(file);
@@ -77,5 +78,5 @@ async function parseClaudeFile(file: string, project: string): Promise<UsageEven
       output,
     });
   }
-  return events;
+  return { events };
 }

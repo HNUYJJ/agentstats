@@ -24,6 +24,8 @@ test('mcp server: initialize, tools/list, tools/call, error codes', () => {
     { jsonrpc: '2.0', id: 7, method: 'resources/list' },
     { jsonrpc: '2.0', id: 8, method: 'prompts/list' },
     { jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'daily_usage', arguments: 'oops' } },
+    { jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name: 'daily_usage', arguments: { since: 'not-a-date' } } },
+    { jsonrpc: '2.0', id: 11, method: 'tools/call', params: { name: 'rate_limits', arguments: {} } },
   ]);
   assert.equal(r.status, 0, r.stderr);
 
@@ -39,7 +41,7 @@ test('mcp server: initialize, tools/list, tools/call, error codes', () => {
   const tools = byId.get(2).result.tools;
   assert.deepEqual(
     tools.map((t) => t.name).sort(),
-    ['budget_status', 'daily_usage', 'model_breakdown', 'price_lookup', 'top_sessions', 'usage_summary']
+    ['budget_status', 'daily_usage', 'model_breakdown', 'price_lookup', 'rate_limits', 'top_sessions', 'usage_summary']
   );
   for (const t of tools) {
     assert.ok(t.description, `${t.name} needs a description`);
@@ -62,6 +64,17 @@ test('mcp server: initialize, tools/list, tools/call, error codes', () => {
   assert.deepEqual(byId.get(7).result.resources, []);
   assert.deepEqual(byId.get(8).result.prompts, []);
   assert.equal(byId.get(9).error.code, -32602); // non-object arguments refused
+
+  // malformed dates are refused with a tool error, not silently ignored
+  const badDate = byId.get(10).result;
+  assert.ok(badDate.isError);
+  assert.ok(badDate.content[0].text.includes('YYYY-MM-DD'));
+
+  // rate limits surface the newest Codex snapshot (79% of the 5h window)
+  const limits = byId.get(11).result;
+  assert.ok(!limits.isError, limits.content?.[0]?.text);
+  assert.ok(limits.content[0].text.includes('79%'));
+  assert.ok(limits.content[0].text.includes('5h window'));
 
   // notifications must never produce a response line
   assert.ok(!r.stdout.includes('"notifications/initialized"'));

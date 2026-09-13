@@ -2,28 +2,42 @@ import { createInterface } from 'node:readline';
 import { createReadStream, existsSync } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import * as path from 'node:path';
-import { UsageEvent } from '../types.js';
+import { PersistentCache } from '../cache.js';
+import { ParsedFile } from '../types.js';
 
 /**
  * mtime+size keyed per-file cache, so watch mode and repeated MCP tool calls
  * skip re-parsing logs that have not changed since the last scan in this
- * process. Parse failures are never cached.
+ * process. Parse failures are never cached. `persistent` additionally reuses
+ * results across process invocations (see cache.ts).
  */
-const fileCache = new Map<string, { key: string; events: UsageEvent[] }>();
+const fileCache = new Map<string, { key: string; value: unknown }>();
 
 const MAX_CACHED_FILE_BYTES = 64 * 1024 * 1024;
 
-export async function cachedFileEvents(file: string, parse: () => Promise<UsageEvent[]>): Promise<UsageEvent[]> {
+export async function cachedFileEvents(
+  file: string,
+  parse: () => Promise<ParsedFile>,
+  persistent?: PersistentCache
+): Promise<ParsedFile> {
   let statOk = false;
   try {
     const st = await stat(file);
     statOk = true;
     const key = `${Math.round(st.mtimeMs)}:${st.size}`;
     const hit = fileCache.get(file);
-    if (hit && hit.key === key) return hit.events;
-    const events = await parse();
-    if (st.size <= MAX_CACHED_FILE_BYTES) fileCache.set(file, { key, events });
-    return events;
+    if (hit && hit.key === key) return hit.value as ParsedFile;
+    if (persistent) {
+      const stored = persistent.get(file, key) as ParsedFile | null;
+      if (stored) {
+        fileCache.set(file, { key, value: stored });
+        return stored;
+      }
+    }
+    const value = await parse();
+    if (st.size <= MAX_CACHED_FILE_BYTES) fileCache.set(file, { key, value });
+    persistent?.put(file, key, value);
+    return value;
   } catch (err) {
     if (statOk) throw err; // parse error: propagate, cache untouched
     return parse(); // stat itself failed (file vanished mid-scan): let parse report it

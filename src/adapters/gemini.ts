@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
-import { AgentId, UsageEvent } from '../types.js';
+import { AgentId, ParsedFile, UsageEvent } from '../types.js';
+import { PersistentCache } from '../cache.js';
 import { baseName, cachedFileEvents, linesOf, listFiles, mtimeMs, safeInt } from './util.js';
 
 /**
@@ -22,7 +23,7 @@ export const geminiAdapter = {
   id: 'gemini' as AgentId,
   rootOf: (home: string) => path.join(home, '.gemini', 'tmp'),
 
-  async scan(home: string) {
+  async scan(home: string, cache?: PersistentCache) {
     const root = this.rootOf(home);
     const files = await listFiles(
       root,
@@ -32,8 +33,8 @@ export const geminiAdapter = {
     const notes: string[] = [];
 
     for (const file of files) {
-      const parsed = await cachedFileEvents(file, () => parseGeminiFile(file, root));
-      events.push(...parsed);
+      const parsed = await cachedFileEvents(file, () => parseGeminiFile(file, root), cache);
+      events.push(...parsed.events);
     }
 
     if (files.length > 0 && events.length === 0) {
@@ -49,7 +50,7 @@ export const geminiAdapter = {
   },
 };
 
-async function parseGeminiFile(file: string, root: string): Promise<UsageEvent[]> {
+async function parseGeminiFile(file: string, root: string): Promise<ParsedFile> {
   const hashDir = path.relative(root, file).split(path.sep)[0] || 'unknown';
   const projectRootFile = path.join(root, hashDir, '.project_root');
   let project = `gemini:${hashDir.slice(0, 8)}`;
@@ -63,32 +64,41 @@ async function parseGeminiFile(file: string, root: string): Promise<UsageEvent[]
   const isJsonl = file.endsWith('.jsonl');
   const defaultSessionId = baseName(file).replace(/\.(json|jsonl)$/, '');
 
-  const units: Array<{ node: any; ts: number }> = [];
+  const units: Array<{ node: any; ts: number; session?: string }> = [];
   if (isJsonl) {
+    // each line is one message; timestamp lives on the message itself and the
+    // file mtime is the fallback so events never land on an "unknown" day
     for await (const line of linesOf(file)) {
+      let node: any;
       try {
-        units.push({ node: JSON.parse(line), ts: 0 });
+        node = JSON.parse(line);
       } catch {
-        /* skip bad line */
+        continue;
       }
+      units.push({
+        node,
+        ts: Date.parse(node?.timestamp) || Date.parse(node?.lastUpdated) || fallbackTs,
+        session: typeof node?.sessionId === 'string' && node.sessionId ? node.sessionId : undefined,
+      });
     }
   } else {
     let doc: any;
     try {
       doc = JSON.parse(readFileSync(file, 'utf8'));
     } catch {
-      return [];
+      return { events: [] };
     }
+    const docSession = typeof doc?.sessionId === 'string' && doc.sessionId ? doc.sessionId : undefined;
     const fileTs = Date.parse(doc?.lastUpdated) || Date.parse(doc?.startTime) || fallbackTs;
     const messages = Array.isArray(doc?.messages) ? doc.messages : [doc];
     for (const msg of messages) {
-      units.push({ node: msg, ts: Date.parse(msg?.timestamp) || fileTs });
+      units.push({ node: msg, ts: Date.parse(msg?.timestamp) || fileTs, session: docSession });
     }
   }
 
   const events: UsageEvent[] = [];
   const state = { model: null as string | null };
-  for (const { node, ts } of units) {
+  for (const { node, ts, session } of units) {
     const found: Array<{ um: any; model: string | null }> = [];
     collect(node, 0, state, found);
     for (const { um, model } of found) {
@@ -98,7 +108,7 @@ async function parseGeminiFile(file: string, root: string): Promise<UsageEvent[]
       if (!prompt && !output) continue;
       events.push({
         agent: 'gemini',
-        sessionId: String(node?.sessionId ?? defaultSessionId),
+        sessionId: String(session ?? node?.sessionId ?? defaultSessionId),
         project,
         model: model || 'unknown',
         ts,
@@ -110,7 +120,7 @@ async function parseGeminiFile(file: string, root: string): Promise<UsageEvent[]
       });
     }
   }
-  return events;
+  return { events };
 }
 
 /** Deep-search a message subtree for usageMetadata objects, tracking model context. */

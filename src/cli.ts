@@ -4,8 +4,9 @@ import { loadConfig, configPath, homeDir, saveConfig } from './config.js';
 import { agentRows, dayKey, filterEvents, groupByFieldSortedByCost, modelRows, monthKey, projectRows, sessionRows, totalsOf } from './aggregate.js';
 import { budgetExitCode, budgetStatus, renderBudgetLine } from './budget.js';
 import { bold, dim, fmtCost, fmtInt, green, red, renderTable, setColors, yellow } from './format.js';
-import { findHarness, harnessStatuses } from './install.js';
-import { runMcpServer, mcpSelfTest } from './mcp.js';
+import { renderLimitsText } from './limits.js';
+import { findHarness, harnessStatuses, resolveLaunch } from './install.js';
+import { runMcpServer, mcpSelfTest, probeMcpSpawn } from './mcp.js';
 import { GENERATED_AT } from './prices.generated.js';
 import { listPriceRows, normalizeModel } from './pricing.js';
 import { buildReport } from './report.js';
@@ -74,6 +75,7 @@ ${bold('Commands:')}
   session            breakdown by session (top spenders first)
   agents             breakdown by agent (claude / codex / gemini)
   projects           breakdown by project
+  limits             rate-limit windows from local logs (Codex: 5h + weekly)
   budget             set or check a monthly USD budget
   report             export a markdown report
   pricing            show the bundled price table (with provenance)
@@ -97,6 +99,8 @@ ${bold('Options:')}
   --json             machine-readable JSON output
   --no-color         disable colors
   --color            force colors even when piped
+  --no-verify        (install) skip the post-install MCP spawn check
+  --deep             (doctor) also spawn the exact MCP command end-to-end
 
 ${bold('Examples:')}
   agentstats                                   # day-by-day for all time
@@ -182,7 +186,8 @@ function cmdDaily(l: Loaded, flags: Args['flags'], monthly: boolean): number {
     const evs = byPeriod.get(k)!;
     const groups: Array<[string, UsageEvent[]]> = breakdown
       ? groupByFieldSortedByCost(evs, breakdown, l.cfg)
-      : [['', evs]];    for (const [label, list] of groups) {
+      : [['', evs]];
+    for (const [label, list] of groups) {
       const t = totalsOf(list, l.cfg);
       const row = [k, ...(breakdown ? [label] : []), fmtInt(t.input), fmtInt(t.output), fmtInt(t.cacheWrite5m + t.cacheWrite1h), fmtInt(t.cacheRead), fmtInt(tokensOf(t)), green(fmtCost(t.cost))];
       rows.push(row);
@@ -270,7 +275,9 @@ function cmdSession(l: Loaded, flags: Args['flags']): number {
   if (!['cost', 'tokens', 'date'].includes(sort)) fail(`--sort must be cost, tokens or date, got: ${sort}`);
   if (sort === 'tokens') rows.sort((a, b) => tokensOf(b.totals) - tokensOf(a.totals));
   else if (sort === 'date') rows.sort((a, b) => b.date.localeCompare(a.date) || b.totals.cost - a.totals.cost);
-  const limit = num(flags, 'limit') ?? 25;
+  const limitRaw = str(flags, 'limit');
+  const limit = limitRaw === undefined ? 25 : Math.floor(Number(limitRaw));
+  if (!Number.isFinite(limit) || limit < 0) fail(`--limit must be a non-negative number, got: ${limitRaw}`);
   const shown = limit > 0 ? rows.slice(0, limit) : rows;
   if (flags.json) {
     console.log(JSON.stringify(rows.map((r) => ({
@@ -363,6 +370,19 @@ function cmdProjects(l: Loaded, flags: Args['flags']): number {
   return 0;
 }
 
+function cmdLimits(l: Loaded, flags: Args['flags']): number {
+  if (flags.json) {
+    console.log(JSON.stringify(l.scan.limits, null, 2));
+    return 0;
+  }
+  if (!l.scan.limits.length) {
+    console.log(dim('no rate-limit information in the local logs (only Codex records it)'));
+    return 0;
+  }
+  console.log(renderLimitsText(l.scan.limits));
+  return 0;
+}
+
 function cmdBudget(l: Loaded, flags: Args['flags'], rest: string[]): number {
   const sub = rest[0];
   const cfg = l.cfg;
@@ -396,7 +416,7 @@ function cmdBudget(l: Loaded, flags: Args['flags'], rest: string[]): number {
   return budgetExitCode(status);
 }
 
-function cmdInstall(args: Args, home: string): number {
+async function cmdInstall(args: Args, home: string): Promise<number> {
   const targetId = args.rest[0];
   if (!targetId) {
     const rows = harnessStatuses(home).map((s) => [
@@ -410,7 +430,7 @@ function cmdInstall(args: Args, home: string): number {
     console.log();
     console.log(dim(`register with: agentstats install <${harnessStatuses(home).map((s) => s.spec.id).join('|')}>`));
     console.log(dim('writes a backup next to each config as <file>.agentstats-backup'));
-    console.log(dim('the agentstats command must be on PATH for your harness (npm i -g agentstats)'));
+    console.log(dim('after installing, restart the harness so it picks up the new MCP server'));
     return 0;
   }
   const spec = findHarness(targetId);
@@ -424,12 +444,29 @@ function cmdInstall(args: Args, home: string): number {
   }
   if (result.result === 'already') {
     console.log(`agentstats is already registered in ${file}`);
+  } else {
+    console.log(green(`registered agentstats MCP server in ${file}`));
+    if (result.backup) console.log(dim(`backup of the previous config: ${result.backup}`));
+  }
+  console.log(dim(`launch: ${result.launch.command} ${result.launch.args.join(' ')} (${result.launch.note})`));
+  if (args.flags['no-verify']) {
+    console.log(dim('spawn check skipped (--no-verify); restart your harness so it picks up the MCP server'));
     return 0;
   }
-  console.log(green(`registered agentstats MCP server in ${file}`));
-  if (result.backup) console.log(dim(`backup of the previous config: ${result.backup}`));
-  console.log(dim('restart your harness so it picks up the new MCP server; the agentstats command must be on PATH (npm i -g agentstats)'));
-  return 0;
+  return verifyLaunch(result.launch);
+}
+
+async function verifyLaunch(launch: { command: string; args: string[] }): Promise<number> {
+  console.log(dim(`verifying the registered command spawns and answers MCP...`));
+  const probe = await probeMcpSpawn(launch);
+  if (probe.ok) {
+    console.log(green(`spawn check ok (${probe.tools} tools) - restart your harness so it picks up the MCP server`));
+    return 0;
+  }
+  console.error(red(`spawn check FAILED: ${probe.error}`));
+  console.error(dim('the MCP entry was written, but your harness may not be able to launch it;'));
+  console.error(dim(`try: npm i -g agentstats, then re-run agentstats install, or check agentstats doctor --deep`));
+  return 1;
 }
 
 function cmdReport(l: Loaded, flags: Args['flags']): number {
@@ -470,15 +507,29 @@ function cmdPricing(flags: Args['flags'], home: string): number {
 
 async function cmdDoctor(l: Loaded, flags: Args['flags']): Promise<number> {
   const mcpHealth = await mcpSelfTest();
+  const deep = !!flags.deep;
+  const spawnProbe = deep ? await probeMcpSpawn(resolveLaunch()) : null;
   if (flags.json) {
-    console.log(JSON.stringify({ version: VERSION, home: l.home, configPath: configPath(l.home), config: l.cfg, sources: l.scan.sources, mcp: mcpHealth }, null, 2));
-    return 0;
+    console.log(JSON.stringify({ version: VERSION, home: l.home, configPath: configPath(l.home), config: l.cfg, sources: l.scan.sources, limits: l.scan.limits, cache: l.scan.cache ?? { enabled: false, path: '', files: 0 }, mcp: mcpHealth, ...(spawnProbe ? { spawnCheck: spawnProbe } : {}) }, null, 2));
+    return spawnProbe && !spawnProbe.ok ? 1 : 0;
   }
   console.log(`agentstats v${VERSION}`);
   console.log(`home:   ${l.home}`);
   console.log(`config: ${configPath(l.home)} ${existsSync(configPath(l.home)) ? '' : dim('(not created yet)')}`);
   console.log(`prices: table fetched ${GENERATED_AT}`);
   console.log(`mcp:    ${mcpHealth.ok ? green('ok') : red('self-test failed')}${mcpHealth.ok ? dim(` (${mcpHealth.tools} tools)`) : dim(` - ${mcpHealth.error}`)}`);
+  if (spawnProbe) {
+    const launch = resolveLaunch();
+    console.log(
+      `spawn:  ${spawnProbe.ok ? green('ok') : red('FAILED')} ${dim(`${launch.command} ${launch.args.join(' ')}`)}` +
+        (spawnProbe.ok ? dim(` (${spawnProbe.tools} tools)`) : dim(` - ${spawnProbe.error}`))
+    );
+  }
+  if (l.scan.cache) {
+    console.log(`cache:  ${l.scan.cache.path} ${dim(`(${fmtInt(l.scan.cache.files)} file(s) cached)`)}`);
+  } else if (process.env.AGENTSTATS_NO_CACHE) {
+    console.log(`cache:  ${yellow('off')} ${dim('disabled via AGENTSTATS_NO_CACHE')}`);
+  }
   console.log('');
   for (const s of l.scan.sources) {
     const status = s.exists ? green('found') : yellow('not found');
@@ -557,6 +608,10 @@ async function main(): Promise<number> {
       const l = await load(args.flags, homeDir());
       return cmdProjects(l, args.flags);
     }
+    case 'limits': {
+      const l = await load(args.flags, homeDir());
+      return cmdLimits(l, args.flags);
+    }
     case 'mcp':
       return runMcpServer();
     case 'budget': {
@@ -574,7 +629,7 @@ async function main(): Promise<number> {
       return await cmdDoctor(l, args.flags);
     }
     case 'install':
-      return cmdInstall(args, homeDir());
+      return await cmdInstall(args, homeDir());
     default:
       console.error(red(`unknown command: ${cmd}`));
       console.error("run 'agentstats --help' for usage");

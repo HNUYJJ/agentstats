@@ -21,7 +21,27 @@ export const cyan = (s: string) => c('36', s);
 
 export function visibleLen(s: string): number {
   // eslint-disable-next-line no-control-regex
-  return s.replace(/\x1b\[[0-9;]*m/g, '').length;
+  const clean = s.replace(/\x1b\[[0-9;]*m/g, '');
+  let width = 0;
+  for (const ch of clean) {
+    const cp = ch.codePointAt(0) ?? 0;
+    width += isWide(cp) ? 2 : 1;
+  }
+  return width;
+}
+
+/** East Asian Wide / Fullwidth code points render two cells wide in terminals. */
+function isWide(cp: number): boolean {
+  return (
+    (cp >= 0x1100 && cp <= 0x115f) || // Hangul Jamo
+    (cp >= 0x2e80 && cp <= 0xa4cf) || // CJK radicals .. Yi syllables
+    (cp >= 0xac00 && cp <= 0xd7a3) || // Hangul syllables
+    (cp >= 0xf900 && cp <= 0xfaff) || // CJK compatibility ideographs
+    (cp >= 0xfe30 && cp <= 0xfe4f) || // CJK compatibility forms
+    (cp >= 0xff00 && cp <= 0xff60) || // fullwidth forms
+    (cp >= 0xffe0 && cp <= 0xffe6) ||
+    (cp >= 0x20000 && cp <= 0x3fffd) // CJK ext B..
+  );
 }
 
 export function fmtInt(n: number): string {
@@ -30,6 +50,18 @@ export function fmtInt(n: number): string {
 
 export function fmtCost(n: number): string {
   return '$' + n.toFixed(2);
+}
+
+/** Compact human duration for countdowns, e.g. "1h 12m" or "4d 3h". */
+export function fmtDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return 'now';
+  const minutes = Math.round(ms / 60000);
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  const mins = minutes % 60;
+  if (days > 0) return hours ? `${days}d ${hours}h` : `${days}d`;
+  if (hours > 0) return mins ? `${hours}h ${mins}m` : `${hours}h`;
+  return `${mins}m`;
 }
 
 export interface TableOpts {

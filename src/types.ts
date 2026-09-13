@@ -54,3 +54,34 @@ export interface Config {
   /** user-supplied price fixes, keyed by normalized model name */
   pricingOverrides?: Record<string, ModelPrice>;
 }
+
+/** One rate-limit window as reported by an agent's own logs. */
+export interface RateWindow {
+  /** percent of the window already consumed (0-100+) */
+  usedPercent: number;
+  /** window length in minutes (300 = 5h, 10080 = weekly) */
+  windowMinutes: number;
+  /** unix seconds when the window resets */
+  resetsAt: number;
+}
+
+/** Latest rate-limit snapshot found in an agent's local logs. */
+export interface RateLimitSnapshot {
+  agent: AgentId;
+  /** epoch ms of the log event that carried the snapshot */
+  ts: number;
+  limitId?: string;
+  planType?: string;
+  primary: RateWindow | null;
+  secondary: RateWindow | null;
+}
+
+/**
+ * What one adapter produces per parsed file. Kept as an object (not a bare
+ * array) so adapters can carry extra per-file data such as rate-limit
+ * snapshots alongside the events.
+ */
+export interface ParsedFile {
+  events: UsageEvent[];
+  limits?: RateLimitSnapshot[];
+}
