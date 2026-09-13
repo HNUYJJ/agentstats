@@ -31,19 +31,25 @@ const execFileP = promisify(execFile);
 const SOURCES = [
   {
     id: 'official-anthropic',
-    url: 'https://platform.claude.com/docs/en/about-claude/pricing.md',
+    urls: [
+      'https://platform.claude.com/docs/en/about-claude/pricing.md',
+      'https://docs.anthropic.com/en/docs/about-claude/pricing.md',
+    ],
+    expect: '## Model pricing',
     min: 6,
     parse: parseAnthropic,
   },
   {
     id: 'official-openai',
-    url: 'https://developers.openai.com/api/docs/pricing',
+    urls: ['https://developers.openai.com/api/docs/pricing'],
+    expect: 'content-switcher-latest-pricing',
     min: 6,
     parse: parseOpenAI,
   },
   {
     id: 'official-google',
-    url: 'https://ai.google.dev/gemini-api/docs/pricing',
+    urls: ['https://ai.google.dev/gemini-api/docs/pricing'],
+    expect: 'per 1M tokens',
     min: 3,
     parse: parseGoogle,
   },
@@ -283,28 +289,72 @@ function parseCommunity(db) {
 
 // --- driver ------------------------------------------------------------------
 
-async function fetchText(url) {
-  // curl first: vendor edge rules can route Node's TLS fingerprint to a block
-  // page even with a browser user-agent (observed with platform.claude.com),
-  // while identical curl requests succeed. curl exists on all CI runners.
+const CURL_META = '\n__AGENTSTATS_CURL_META__';
+
+/**
+ * GET a URL via curl and classify failure modes, because "why did the fetch
+ * fail" is the difference between "fix the parser" and "wait for the network":
+ *   - redirected off-host        -> region block / bot challenge, not a layout change
+ *   - HTTP 403/451               -> edge blocked this network
+ *   - content marker missing     -> genuine layout change, parser needs updating
+ */
+async function curlGet(url) {
+  const { stdout } = await execFileP(
+    'curl',
+    ['-sSL', '--max-time', '30', '-A', 'Mozilla/5.0', '-w', CURL_META + '%{http_code}|%{url_effective}', url],
+    { maxBuffer: 64 * 1024 * 1024 }
+  );
+  const sep = stdout.lastIndexOf(CURL_META);
+  if (sep < 0) throw new Error('curl produced no response (connection failed before any bytes)');
+  return {
+    body: stdout.slice(0, sep),
+    status: Number(stdout.slice(sep + CURL_META.length).split('|')[0]) || 0,
+    finalUrl: stdout.slice(sep + CURL_META.length).split('|')[1] || '',
+  };
+}
+
+function classifyFailure(url, status, finalUrl) {
+  let redirected = '';
   try {
-    const { stdout } = await execFileP(
-      'curl',
-      ['-sSL', '--max-time', '30', '-A', 'Mozilla/5.0', url],
-      { maxBuffer: 64 * 1024 * 1024 }
-    );
-    if (stdout && stdout.length >= 500) return stdout;
-    throw new Error(`curl returned only ${stdout ? stdout.length : 0} bytes`);
-  } catch (curlErr) {
-    const res = await fetch(url, {
-      headers: { 'user-agent': 'Mozilla/5.0' },
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (!res.ok) throw new Error(`fetch failed: HTTP ${res.status} for ${url}`);
-    const text = await res.text();
-    if (!text || text.length < 500) throw new Error(`fetch failed: suspiciously small payload from ${url}`);
-    return text;
+    if (finalUrl && new URL(finalUrl).host !== new URL(url).host) {
+      redirected = `redirected to ${finalUrl} - region block or bot challenge, NOT a page layout change`;
+    }
+  } catch {
+    /* unparseable final url - ignore */
   }
+  if (redirected) return redirected;
+  if (status === 403 || status === 451) return `HTTP ${status} - edge blocked this network`;
+  if (!status) return 'connection failed before any response';
+  return `HTTP ${status}`;
+}
+
+/** Fetch a URL via curl (falls back to Node fetch); returns the body or throws a classified error. */
+async function fetchText(url, expect) {
+  const attempts = [];
+  try {
+    const { body, status, finalUrl } = await curlGet(url);
+    let redirected = false;
+    try {
+      redirected = !!finalUrl && new URL(finalUrl).host !== new URL(url).host;
+    } catch {
+      /* keep false */
+    }
+    if (status >= 200 && status < 300 && body.length >= 500 && !redirected && (!expect || body.includes(expect))) {
+      return body;
+    }
+    attempts.push(`${classifyFailure(url, status, finalUrl)}`);
+  } catch (err) {
+    attempts.push(err instanceof Error ? err.message : String(err));
+  }
+  try {
+    const res = await fetch(url, { headers: { 'user-agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(30_000) });
+    const body = await res.text();
+    if (res.ok && body.length >= 500 && (!expect || body.includes(expect))) return body;
+    attempts.push(`node fetch answered HTTP ${res.status}`);
+  } catch (err) {
+    attempts.push(`node fetch failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  throw new Error(attempts.join(' | '));
 }
 
 function parsePrevTable(text) {
@@ -324,13 +374,27 @@ function parsePrevTable(text) {
 async function main() {
   const sections = [];
   for (const src of SOURCES) {
-    const text = await fetchText(src.url);
+    let text = null;
+    let usedUrl = '';
+    const attempts = [];
+    for (const url of src.urls) {
+      try {
+        text = await fetchText(url, src.expect);
+        usedUrl = url;
+        break;
+      } catch (err) {
+        attempts.push(`- ${url}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    if (text === null) {
+      throw new Error(`${src.id}: all ${src.urls.length} source(s) failed - run did NOT write anything\n${attempts.join('\n')}`);
+    }
     const map = src.parse(text);
     if (map.size < src.min) {
-      throw new Error(`${src.id}: only ${map.size} models parsed (expected >= ${src.min}) — page layout changed?`);
+      throw new Error(`${src.id}: only ${map.size} models parsed (expected >= ${src.min}) - page layout changed?`);
     }
-    sections.push({ id: src.id, url: src.url, map });
-    console.log(`${src.id}: ${map.size} models`);
+    sections.push({ id: src.id, url: usedUrl, map });
+    console.log(`${src.id}: ${map.size} models (${usedUrl})`);
   }
 
   const table = {};
