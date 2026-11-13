@@ -48,7 +48,10 @@ const SOURCES = [
   },
   {
     id: 'official-google',
-    urls: ['https://ai.google.dev/gemini-api/docs/pricing'],
+    urls: [
+      'https://aistudio.google.com/docs/pricing',
+      'https://ai.google.dev/gemini-api/docs/pricing',
+    ],
     expect: 'per 1M tokens',
     min: 3,
     parse: parseGoogle,
@@ -61,7 +64,7 @@ const COMMUNITY_ID = 'community-litellm';
 /** Model families bundled in agentstats; everything else is skipped. */
 const FAMILIES = /^(claude|gpt|gemini|codex-mini|o1|o3|o4)(-|$)/;
 /** Google sections priced per-image/per-audio rather than per-token. */
-const GOOGLE_DENY = /image|tts|live|veo|embedding|audio|robotics/;
+const GOOGLE_DENY = /image|nano-banana|tts|live|transcribe|translate|veo|embedding|audio|robotics/;
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const OUT_FILE = path.join(root, 'src', 'prices.generated.ts');
@@ -194,52 +197,59 @@ function htmlToText(s) {
 }
 
 function parseGoogle(html) {
-  // headings up front: each model section has an h2 "Gemini ...", its tables
-  // are preceded by tier h3s (Standard/Batch/Flex/Priority) that must be skipped
-  const headings = [...html.matchAll(/<h[1-4][^>]*>([\s\S]*?)<\/h[1-4]>/g)].map((m) => ({
-    pos: m.index,
-    text: htmlToText(m[1]),
-  }));
+  // the page (aistudio.google.com/docs/pricing) is devsite component syntax:
+  // one `## Title {% id="model-id" %}` heading per model, tier tabs
+  // (Standard/Batch/Flex/Priority) rendered with {% tab title="..." %}, and
+  // tables as markdown bullet lists whose rows are separated by `---`.
+  const h = html
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&nbsp;/g, ' ');
 
+  const heads = [...h.matchAll(/^## (.+?)\s*\{%\s*id="([a-z0-9.-]+)"\s*%\}/gm)];
   const out = new Map();
-  let idx = 0;
-  while ((idx = html.indexOf('<table', idx)) !== -1) {
-    const end = html.indexOf('</table>', idx);
-    if (end < 0) break;
-    const table = html.slice(idx, end + 8);
-    idx = end;
-
-    if (!table.includes('per 1M tokens')) continue;
-    // nearest model-level heading before the table (tier h3s don't match)
-    let display = null;
-    for (let i = headings.length - 1; i >= 0; i--) {
-      if (headings[i].pos >= idx && headings[i].text) continue;
-      if (/^gemini\b/i.test(headings[i].text)) {
-        display = headings[i].text;
-        break;
-      }
-    }
-    if (!display) continue;
-    const key = normalizeModel(display.replace(/\s+/g, '-'));
+  for (let i = 0; i < heads.length; i++) {
+    const id = heads[i][2];
+    const key = normalizeModel(id);
     if (!FAMILIES.test(key) || GOOGLE_DENY.test(key)) continue;
 
-    const rows = table.split('<tr').slice(1);
+    const start = heads[i].index + heads[i][0].length;
+    const end = i + 1 < heads.length ? heads[i + 1].index : h.length;
+    const section = h.slice(start, end);
+
+    // only the Standard tier tab; Batch/Flex/Priority/Contributor follow
+    const tabMatch = section.match(/\{%\s*tab title="Standard"\s*%\}([\s\S]*?)(?=\{%\s*tab title=|\{%\s*\/tabs\s*%\})/);
+    if (!tabMatch) continue;
+    const tableMatch = tabMatch[1].match(/\{%\s*table\s*%\}([\s\S]*?)\{%\s*\/table\s*%\}/);
+    if (!tableMatch) continue;
+
+    const cleanCell = (s) =>
+      s.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/\{%[\s\S]*?%\}/g, ' ').replace(/\s+/g, ' ').trim();
+
     let input = null;
     let cached = null;
     let output = null;
-    for (const row of rows) {
-      const cells = [...row.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/g)].map((c) => htmlToText(c[1]));
-      const label = (cells[0] || '').toLowerCase();
-      const paid = cells.find((c) => /\$[\d.]+/.test(c) && !/^free/i.test(c));
-      if (!paid) continue;
-      const price = parseUSD(paid); // first $ value = current price, scheduled future prices ignored
+    let perMTok = false;
+    for (const row of tableMatch[1].split(/^  ---\s*$/m)) {
+      const cells = row.split(/\n\s+\* ?/).map(cleanCell).filter(Boolean);
+      if (!cells.length) continue;
+      const label = cells[0].toLowerCase();
+      if (cells.some((c) => /per 1m tokens/i.test(c))) {
+        perMTok = true; // header row: gate for token-priced models
+        continue;
+      }
+      // paid tier is the last cell; first $ value = base price (long-context
+      // surcharges and future scheduled prices are ignored)
+      const paid = cells[cells.length - 1];
+      const price = parseUSD(paid);
       if (price === null) continue;
       if (label.startsWith('input price')) input = price;
       else if (label.startsWith('output price')) output = price;
       else if (label.startsWith('context caching')) cached = price;
     }
-    if (input === null || output === null) continue;
-    // first table per model = the Standard tier (Batch/Flex/Priority follow)
+    if (!perMTok || input === null || output === null) continue;
     if (!out.has(key)) {
       out.set(key, { input, ...(cached !== null ? { cachedInput: cached } : {}), output });
     }
